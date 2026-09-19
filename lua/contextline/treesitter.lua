@@ -16,6 +16,8 @@ local language_names = {
   ruby = "RUBY",
   rust = "RUST",
   sql = "SQL",
+  sh = "SH",
+  zsh = "ZSH",
   toml = "TOML",
   tsx = "TSX",
   typescript = "TYPESCRIPT",
@@ -79,6 +81,12 @@ local symbol_nodes = {
   block_mapping_pair = true,
   table = true,
   section = true,
+  -- Control flow & loop statements (Shell, Python, etc.)
+  while_statement = true,
+  for_statement = true,
+  if_statement = true,
+  case_statement = true,
+  select_statement = true,
 }
 
 local function short_text(node, bufnr)
@@ -326,6 +334,34 @@ local function name_node(node, bufnr)
       return "impl " .. short_text(tp, bufnr)
     end
   end
+  if ntype == "while_statement" then
+    local cond = node:field("condition")[1]
+    if cond then
+      return "while " .. short_text(cond, bufnr)
+    end
+    return "while"
+  end
+  if ntype == "for_statement" then
+    local var = node:field("variable")[1]
+    if var then
+      return "for " .. short_text(var, bufnr)
+    end
+    return "for"
+  end
+  if ntype == "if_statement" then
+    local cond = node:field("condition")[1]
+    if cond then
+      return "if " .. short_text(cond, bufnr)
+    end
+    return "if"
+  end
+  if ntype == "case_statement" then
+    local val = node:field("value")[1]
+    if val then
+      return "case " .. short_text(val, bufnr)
+    end
+    return "case"
+  end
   for _, field in ipairs({ "name", "declarator", "type" }) do
     local values = node:field(field)
     if values and values[1] then
@@ -362,6 +398,8 @@ local function symbol_label(node)
   if kind == "create_table" then return "table" end
   if kind == "create_view" then return "view" end
   if is_python_property(node) then return "property" end
+  if kind:match("^while") or kind:match("^for") then return "loop" end
+  if kind:match("^if") or kind:match("^case") or kind:match("^select") then return "condition" end
   if kind:match("method") or (kind:match("function") and is_nested_in_type(node)) then return "method" end
   if kind:match("function") or kind:match("declaration") or kind:match("definition") or kind:match("item") then
     return "function"
@@ -413,7 +451,26 @@ function M.get_info(opts)
   end
 
   if #nodes == 0 then
-    return nil
+    local total_lines = vim.api.nvim_buf_line_count(bufnr)
+    return {
+      language = language_names[ft] or ft:upper(),
+      segments = {
+        {
+          text = "(root)",
+          kind = "root",
+          symbol_kind = "Root",
+          label = "root",
+          icon = "󰅩",
+          icon_hl = "Comment",
+          hl = "Comment",
+          lnum = 1,
+          end_lnum = total_lines,
+          lines = total_lines,
+          type = "symbol",
+        },
+      },
+      source = "treesitter",
+    }
   end
 
   local segments = {}
@@ -451,6 +508,23 @@ function M.get_info(opts)
 
   if #segments == 0 then
     return nil
+  end
+
+  if nodes[1] and nodes[1]:type():match("_statement") then
+    local total_lines = vim.api.nvim_buf_line_count(bufnr)
+    table.insert(segments, 1, {
+      text = "(root)",
+      kind = "root",
+      symbol_kind = "Root",
+      label = "root",
+      icon = "󰅩",
+      icon_hl = "Comment",
+      hl = "Comment",
+      lnum = 1,
+      end_lnum = total_lines,
+      lines = total_lines,
+      type = "symbol",
+    })
   end
 
   return {

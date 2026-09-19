@@ -60,6 +60,10 @@ M.symbol_map = {
   section = { icon = "󰉫", hl = "Title" },
   impl = { icon = "󰠱", hl = "Type" },
   view = { icon = "󰈈", hl = "Type" },
+  loop = { icon = "󰑖", hl = "Repeat" },
+  condition = { icon = "󰊕", hl = "Conditional" },
+  root = { icon = "󰅩", hl = "Comment" },
+  scope = { icon = "󰅩", hl = "Keyword" },
 }
 
 function M.get_symbol_meta(kind_or_label)
