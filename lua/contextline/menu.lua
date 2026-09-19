@@ -92,7 +92,7 @@ local ts_symbols = {
 local function collect_ts(node, bufnr, depth, items)
   for child in node:iter_children() do
     local ctype = child:type()
-    if ctype == "export_statement" or ctype == "decorated_definition" then
+    if ctype == "export_statement" or ctype == "decorated_definition" or ctype == "redirected_statement" then
       collect_ts(child, bufnr, depth, items)
     elseif ts_symbols[ctype] then
       local name = ""
@@ -111,11 +111,13 @@ local function collect_ts(node, bufnr, depth, items)
       end
 
       if name ~= "" then
-        local meta = icons.get_symbol_meta(ctype)
+        local label = treesitter.symbol_label(child)
+        local meta = icons.get_symbol_meta(label)
         local srow, _, erow, _ = child:range()
         table.insert(items, {
           name = name,
           kind = ctype,
+          label = label,
           icon = meta.icon,
           icon_hl = meta.hl,
           lnum = srow + 1,

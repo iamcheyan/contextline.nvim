@@ -534,4 +534,6 @@ function M.get_info(opts)
   }
 end
 
+M.symbol_label = symbol_label
+
 return M
