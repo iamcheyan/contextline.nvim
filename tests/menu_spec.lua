@@ -53,10 +53,14 @@ assert(#bat_symbols == 2, "Batch symbols count mismatch: " .. #bat_symbols)
 assert(bat_symbols[1].name == ":start", "Batch :start missing")
 assert(bat_symbols[2].name == ":cleanup", "Batch :cleanup missing")
 
--- 4. Test menu open & close
-menu.open({ bufnr = 0, winid = vim.api.nvim_get_current_win() })
-assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "Menu float window did not open")
+-- 4. Test menu open & close with segment filtering
+menu.open({ bufnr = 0, winid = vim.api.nvim_get_current_win(), segment_index = 1 })
+assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "Menu float window did not open for segment 1")
 menu.close()
 assert(menu.active_win == nil, "Menu float window did not close cleanly")
+
+menu.open({ bufnr = 0, winid = vim.api.nvim_get_current_win(), segment_index = 2 })
+assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "Menu float window did not open for segment 2")
+menu.close()
 
 print("menu_spec: OK")

@@ -159,6 +159,93 @@ function M.get_symbols(bufnr)
   return {}
 end
 
+---Filter items based on clicked segment index and current cursor row
+local function filter_by_segment(all_items, cur_row, segment_index, info)
+  if not info or not info.segments or #info.segments <= 1 or not segment_index or segment_index <= 1 then
+    return all_items, " 󰅩 Code Hierarchy "
+  end
+
+  local total_segs = #info.segments
+  local clicked_seg = info.segments[segment_index]
+  if not clicked_seg then
+    return all_items, " 󰅩 Code Hierarchy "
+  end
+
+  -- Find the active item in all_items corresponding to cur_row
+  local active_item = nil
+  local active_idx = nil
+  for i, it in ipairs(all_items) do
+    if it.lnum <= cur_row and (not it.end_lnum or it.end_lnum >= cur_row) then
+      active_item = it
+      active_idx = i
+    end
+  end
+
+  -- 1. If clicked the leaf segment (e.g. method or property):
+  -- Show only the direct siblings inside the enclosing parent container
+  if segment_index == total_segs and active_item then
+    local parent_item = nil
+    local parent_idx = nil
+    if (active_item.depth or 0) > 0 then
+      for i = (active_idx or 1) - 1, 1, -1 do
+        if (all_items[i].depth or 0) == (active_item.depth or 0) - 1 then
+          parent_item = all_items[i]
+          parent_idx = i
+          break
+        end
+      end
+    end
+
+    if parent_item and parent_idx then
+      local siblings = {}
+      for i = parent_idx + 1, #all_items do
+        local it = all_items[i]
+        if (it.depth or 0) < (active_item.depth or 0) then
+          break
+        end
+        if (it.depth or 0) == (active_item.depth or 0) then
+          local cloned = vim.deepcopy(it)
+          cloned.depth = 0
+          table.insert(siblings, cloned)
+        end
+      end
+      if #siblings > 0 then
+        return siblings, string.format(" %s %s ", parent_item.icon or "󰅩", parent_item.name)
+      end
+    end
+  end
+
+  -- 2. If clicked an intermediate container segment:
+  -- Find the item matching clicked_seg.text
+  local target_depth = 0
+  for _, it in ipairs(all_items) do
+    if it.name:find(clicked_seg.text, 1, true) or clicked_seg.text:find(it.name, 1, true) then
+      target_depth = it.depth or 0
+      break
+    end
+  end
+
+  local filtered = {}
+  for _, it in ipairs(all_items) do
+    local d = it.depth or 0
+    if d == target_depth then
+      local cloned = vim.deepcopy(it)
+      cloned.depth = 0
+      table.insert(filtered, cloned)
+    elseif d == target_depth + 1 then
+      local cloned = vim.deepcopy(it)
+      cloned.depth = 1
+      table.insert(filtered, cloned)
+    end
+  end
+
+  if #filtered > 0 then
+    return filtered, string.format(" %s %s ", clicked_seg.icon or "󰅩", clicked_seg.text or "Outline")
+  end
+
+  return all_items, " 󰅩 Code Hierarchy "
+end
+
 function M.close()
   if M.active_win and vim.api.nvim_win_is_valid(M.active_win) then
     vim.api.nvim_win_close(M.active_win, true)
@@ -175,14 +262,19 @@ function M.open(opts)
   -- Close existing
   M.close()
 
-  local items = M.get_symbols(src_buf)
-  if #items == 0 then
+  local all_items = M.get_symbols(src_buf)
+  if #all_items == 0 then
     vim.notify("Contextline: No outline symbols found in current file", vim.log.levels.INFO)
     return
   end
 
-  -- Determine active item closest to cursor row
+  local cl = require("contextline")
+  local info = cl.get_info({ bufnr = src_buf, winid = src_win })
   local cur_row = vim.api.nvim_win_get_cursor(src_win)[1]
+
+  local items, menu_title = filter_by_segment(all_items, cur_row, opts.segment_index, info)
+
+  -- Determine active item closest to cursor row
   local active_idx = 1
   for i, item in ipairs(items) do
     if item.lnum <= cur_row then
@@ -196,7 +288,7 @@ function M.open(opts)
   -- Format display lines
   local display_lines = {}
   local highlights = {}
-  local max_len = 30
+  local max_len = 25
   for i, item in ipairs(items) do
     local indent = string.rep("  ", item.depth or 0)
     local line_str = string.format("%s%s %s", indent, item.icon or "󰘦", item.name)
@@ -237,13 +329,29 @@ function M.open(opts)
     vim.api.nvim_buf_add_highlight(buf, ns, h.hl_group, h.line, h.col_start, h.col_end)
   end
 
-  -- Calculate geometry
-  local win_width = math.min(max_len + 6, vim.o.columns - 4)
-  local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
-  local col_offset = opts.col or 2
-  if col_offset + win_width > vim.o.columns then
+  -- Calculate geometry and horizontal column
+  local col_offset = opts.col
+  if not col_offset then
+    if opts.segment_index and opts.segment_index > 1 and info and info.segments then
+      local c = 2
+      for idx = 1, opts.segment_index - 1 do
+        local seg = info.segments[idx]
+        if seg then
+          local seg_text = (seg.icon and (seg.icon .. " ") or "") .. (seg.text or "")
+          c = c + vim.fn.strdisplaywidth(seg_text) + 3
+        end
+      end
+      col_offset = c
+    else
+      col_offset = 2
+    end
+  end
+
+  local win_width = math.min(max_len + 4, vim.o.columns - 4)
+  if col_offset + win_width > vim.o.columns - 2 then
     col_offset = math.max(0, vim.o.columns - win_width - 2)
   end
+  local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "win",
@@ -254,7 +362,7 @@ function M.open(opts)
     height = win_height,
     style = "minimal",
     border = "rounded",
-    title = " 󰅩 Code Hierarchy ",
+    title = menu_title,
     title_pos = "left",
     zindex = 250,
   })
