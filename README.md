@@ -24,9 +24,10 @@ BATCH | LABEL > process_job | LINE 180 | CALL :upload_job
 - Tree-sitter is used as a dependency-free fallback for common languages.
 
 The generic Tree-sitter provider currently recognizes common class, function,
-method, module, interface, struct, enum, trait, and implementation nodes in
-languages such as Python, Lua, JavaScript/TypeScript, Bash, C/C++, Go, Rust,
-Ruby, and Java, subject to the installed parser grammar.
+method, interface, struct, enum, record, HTML element, SQL query, and
+implementation nodes in languages such as Python, Lua, JavaScript/TypeScript,
+Bash, C/C++, Go, Rust, Ruby, Java, HTML, and SQL, subject to the installed
+parser grammar.
 
 The language-specific design and the information users typically need from
 each language are documented in [Language context design](docs/language-context.md).
