@@ -353,6 +353,12 @@ function M.open(opts)
     vim.api.nvim_buf_add_highlight(buf, ns, h.hl_group, h.line, h.col_start, h.col_end)
   end
 
+local sep_codes = {
+  [vim.fn.char2nr("")] = true,
+  [vim.fn.char2nr("›")] = true,
+  [vim.fn.char2nr(">")] = true,
+}
+
 local function find_segment_win_col(src_win, seg, mouse_col)
   local wininfo = vim.fn.getwininfo(src_win)[1]
   if not wininfo then
@@ -363,78 +369,77 @@ local function find_segment_win_col(src_win, seg, mouse_col)
   local win_col_start = wininfo.wincol
   local win_width = wininfo.width
 
-  -- Read characters directly from the winbar row on screen
+  -- 1. If mouse_col is provided (user clicked with mouse):
+  -- Scan backward along exact screen cells until hitting the preceding separator.
+  -- This is 100% immune to substring duplicates, scrolling, or left truncation.
+  if mouse_col and mouse_col > 0 then
+    local c = math.min(mouse_col, win_width)
+    while c > 1 do
+      local abs_screen_col = win_col_start + c - 1
+      local code = vim.fn.screenchar(winbar_row, abs_screen_col)
+      if sep_codes[code] then
+        break
+      end
+      c = c - 1
+    end
+
+    local start_cell = c
+    local code_at_c = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
+    if sep_codes[code_at_c] then
+      start_cell = c + 1
+      local next_code = vim.fn.screenchar(winbar_row, win_col_start + start_cell - 1)
+      if next_code == 32 then
+        start_cell = start_cell + 1
+      end
+    end
+
+    return math.max(0, start_cell - 1)
+  end
+
+  -- 2. If opened via keyboard, find segment text on the winbar screen cells:
+  local search_text = seg and seg.text or ""
+  if search_text == "" then
+    return 0
+  end
+
   local row_chars = {}
-  for c = win_col_start, win_col_start + win_width - 1 do
-    local ch_code = vim.fn.screenchar(winbar_row, c)
-    local ch = ch_code > 0 and vim.fn.nr2char(ch_code) or " "
-    table.insert(row_chars, ch)
+  for c = 1, win_width do
+    local code = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
+    table.insert(row_chars, code > 0 and vim.fn.nr2char(code) or " ")
   end
   local row_text = table.concat(row_chars)
 
-  local search_text = seg and seg.text or ""
-  if search_text == "" then
-    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
+  local p = row_text:find(search_text, 1, true)
+  if not p then
+    local first_word = search_text:match("^%S+") or search_text
+    p = row_text:find(first_word, 1, true)
   end
 
-  local first_word = search_text:match("^%S+") or search_text
-
-  local best_pos = nil
-  local min_dist = math.huge
-  local ref_col = (mouse_col and mouse_col > 0) and mouse_col or 1
-
-  local function evaluate_match(p)
-    local dist = math.abs(p - ref_col)
-    if dist < min_dist then
-      min_dist = dist
-      best_pos = p
-    end
+  if not p then
+    return 0
   end
 
-  local start_search = 1
-  while true do
-    local p = row_text:find(search_text, start_search, true)
-    if not p then break end
-    evaluate_match(p)
-    start_search = p + 1
-  end
-
-  if not best_pos and first_word ~= search_text then
-    start_search = 1
-    while true do
-      local p = row_text:find(first_word, start_search, true)
-      if not p then break end
-      evaluate_match(p)
-      start_search = p + 1
-    end
-  end
-
-  if not best_pos then
-    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
-  end
-
-  -- Scan backward to find the segment's starting boundary (after separator)
-  local seg_start = best_pos
-  while seg_start > 1 do
-    local prev = row_chars[seg_start - 1]
-    if prev == "" or prev == "›" or prev == ">" then
+  local c = p
+  while c > 1 do
+    local abs_screen_col = win_col_start + c - 1
+    local code = vim.fn.screenchar(winbar_row, abs_screen_col)
+    if sep_codes[code] then
       break
     end
-    if prev == " " and seg_start > 2 and (row_chars[seg_start - 2] == "" or row_chars[seg_start - 2] == "›" or row_chars[seg_start - 2] == ">") then
-      break
-    end
-    seg_start = seg_start - 1
+    c = c - 1
   end
 
-  if row_chars[seg_start] == " " and seg_start < best_pos then
-    local prev = row_chars[seg_start - 1]
-    if prev == "" or prev == "›" or prev == ">" then
-      seg_start = seg_start + 1
+  local start_cell = c
+  local code_at_c = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
+  if sep_codes[code_at_c] then
+    start_cell = c + 1
+    local next_code = vim.fn.screenchar(winbar_row, win_col_start + start_cell - 1)
+    if next_code == 32 then
+      start_cell = start_cell + 1
     end
   end
 
-  -- 0-indexed column relative to window
-  return math.max(0, seg_start - 1)
+  return math.max(0, start_cell - 1)
 end
 
   local col_offset = opts.col
