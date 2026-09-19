@@ -353,52 +353,95 @@ function M.open(opts)
     vim.api.nvim_buf_add_highlight(buf, ns, h.hl_group, h.line, h.col_start, h.col_end)
   end
 
-  -- Calculate geometry and horizontal column
+local function find_segment_win_col(src_win, seg, mouse_col)
+  local wininfo = vim.fn.getwininfo(src_win)[1]
+  if not wininfo then
+    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
+  end
+
+  local winbar_row = wininfo.winrow
+  local win_col_start = wininfo.wincol
+  local win_width = wininfo.width
+
+  -- Read characters directly from the winbar row on screen
+  local row_chars = {}
+  for c = win_col_start, win_col_start + win_width - 1 do
+    local ch_code = vim.fn.screenchar(winbar_row, c)
+    local ch = ch_code > 0 and vim.fn.nr2char(ch_code) or " "
+    table.insert(row_chars, ch)
+  end
+  local row_text = table.concat(row_chars)
+
+  local search_text = seg and seg.text or ""
+  if search_text == "" then
+    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
+  end
+
+  local first_word = search_text:match("^%S+") or search_text
+
+  local best_pos = nil
+  local min_dist = math.huge
+  local ref_col = (mouse_col and mouse_col > 0) and mouse_col or 1
+
+  local function evaluate_match(p)
+    local dist = math.abs(p - ref_col)
+    if dist < min_dist then
+      min_dist = dist
+      best_pos = p
+    end
+  end
+
+  local start_search = 1
+  while true do
+    local p = row_text:find(search_text, start_search, true)
+    if not p then break end
+    evaluate_match(p)
+    start_search = p + 1
+  end
+
+  if not best_pos and first_word ~= search_text then
+    start_search = 1
+    while true do
+      local p = row_text:find(first_word, start_search, true)
+      if not p then break end
+      evaluate_match(p)
+      start_search = p + 1
+    end
+  end
+
+  if not best_pos then
+    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
+  end
+
+  -- Scan backward to find the segment's starting boundary (after separator)
+  local seg_start = best_pos
+  while seg_start > 1 do
+    local prev = row_chars[seg_start - 1]
+    if prev == "" or prev == "›" or prev == ">" then
+      break
+    end
+    if prev == " " and seg_start > 2 and (row_chars[seg_start - 2] == "" or row_chars[seg_start - 2] == "›" or row_chars[seg_start - 2] == ">") then
+      break
+    end
+    seg_start = seg_start - 1
+  end
+
+  if row_chars[seg_start] == " " and seg_start < best_pos then
+    local prev = row_chars[seg_start - 1]
+    if prev == "" or prev == "›" or prev == ">" then
+      seg_start = seg_start + 1
+    end
+  end
+
+  -- 0-indexed column relative to window
+  return math.max(0, seg_start - 1)
+end
+
   local col_offset = opts.col
   if not col_offset then
-    if not opts.segment_index or opts.segment_index <= 1 then
-      col_offset = 1
-    else
-      local segments = info and (info.all or info.segments) or {}
-      local separator = (cl.config and cl.config.separator) or "  "
-      local sep_len = vim.fn.strdisplaywidth(separator)
-      local c = 1
-      for idx = 1, math.min(opts.segment_index - 1, #segments) do
-        local seg = segments[idx]
-        if seg then
-          local is_leaf = (idx == #segments)
-          local piece = ""
-          if (not cl.config or cl.config.show_icons ~= false) and seg.icon and seg.icon ~= "" then
-            piece = piece .. seg.icon .. " "
-          end
-          local text = seg.text or ""
-          if cl.config and cl.config.show_labels and seg.label and seg.label ~= "" and seg.type == "symbol" then
-            text = seg.label .. " " .. text
-          end
-          piece = piece .. text
-          if cl.config and cl.config.show_buffer_flags and seg.type == "file" and src_buf and vim.api.nvim_buf_is_valid(src_buf) then
-            local is_modified = vim.bo[src_buf].modified
-            local is_ro = vim.bo[src_buf].readonly or not vim.bo[src_buf].modifiable
-            if is_modified then piece = piece .. " [●]" end
-            if is_ro then piece = piece .. " []" end
-          end
-          if cl.config and cl.config.show_scope_lines and is_leaf and seg.type == "symbol" and seg.lines and seg.lines > 1 then
-            piece = piece .. string.format(" (%dL)", seg.lines)
-          end
-          c = c + vim.fn.strdisplaywidth(piece) + sep_len
-        end
-      end
-      col_offset = c
-    end
-
-    if opts.click_col and opts.click_col > 0 then
-      local segments = info and (info.all or info.segments) or {}
-      local seg = segments[opts.segment_index]
-      local seg_w = seg and vim.fn.strdisplaywidth((seg.icon and (seg.icon .. " ") or "") .. (seg.text or "")) or 15
-      if col_offset > opts.click_col or opts.click_col > col_offset + seg_w + 4 then
-        col_offset = math.max(1, opts.click_col - 2)
-      end
-    end
+    local segments = info and (info.all or info.segments) or {}
+    local seg = opts.segment_index and segments[opts.segment_index] or nil
+    col_offset = find_segment_win_col(src_win, seg, opts.click_col)
   end
 
   local win_width = math.min(max_len + 4, vim.o.columns - 4)
