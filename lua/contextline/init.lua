@@ -24,11 +24,9 @@ M.config = {
 
 _G.contextline_click = function(minwid, clicks, button, modifier)
   local mousepos = vim.fn.getmousepos()
-  local click_col = nil
   local winid = vim.api.nvim_get_current_win()
   if mousepos and mousepos.winid and mousepos.winid > 0 then
     winid = mousepos.winid
-    click_col = math.max(0, mousepos.wincol - 2)
   end
 
   local ok, menu = pcall(require, "contextline.menu")
@@ -36,7 +34,6 @@ _G.contextline_click = function(minwid, clicks, button, modifier)
     menu.open({
       winid = winid,
       segment_index = minwid,
-      col = click_col,
     })
   end
 end

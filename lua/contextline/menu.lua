@@ -285,20 +285,20 @@ function M.open(opts)
     end
   end
 
-  -- Format display lines
+  -- Format display lines (with 1 space left padding for borderless dropdown)
   local display_lines = {}
   local highlights = {}
   local max_len = 25
   for i, item in ipairs(items) do
     local indent = string.rep("  ", item.depth or 0)
-    local line_str = string.format("%s%s %s", indent, item.icon or "󰘦", item.name)
+    local line_str = string.format(" %s%s %s", indent, item.icon or "󰘦", item.name)
     local lnum_str = string.format(":%d", item.lnum)
     table.insert(display_lines, line_str)
     if #line_str + #lnum_str > max_len then
       max_len = #line_str + #lnum_str
     end
 
-    local icon_byte_start = #indent
+    local icon_byte_start = 1 + #indent
     local icon_byte_end = icon_byte_start + #(item.icon or "󰘦")
     table.insert(highlights, {
       hl_group = item.icon_hl or "Identifier",
@@ -313,7 +313,18 @@ function M.open(opts)
   for i, text in ipairs(display_lines) do
     local pad = string.rep(" ", max_len - #text + 2)
     local lnum_str = string.format(":%d", items[i].lnum)
-    table.insert(final_lines, text .. pad .. lnum_str)
+    local full_line = text .. pad .. lnum_str .. " "
+    table.insert(final_lines, full_line)
+
+    -- Highlight line number with Comment
+    local lnum_start = #text + #pad
+    local lnum_end = lnum_start + #lnum_str
+    table.insert(highlights, {
+      hl_group = "Comment",
+      line = i - 1,
+      col_start = lnum_start,
+      col_end = lnum_end,
+    })
   end
 
   -- Create buffer
@@ -332,18 +343,39 @@ function M.open(opts)
   -- Calculate geometry and horizontal column
   local col_offset = opts.col
   if not col_offset then
-    if opts.segment_index and opts.segment_index > 1 and info and info.segments then
-      local c = 2
-      for idx = 1, opts.segment_index - 1 do
-        local seg = info.segments[idx]
+    if not opts.segment_index or opts.segment_index <= 1 then
+      col_offset = 1
+    else
+      local segments = info and (info.all or info.segments) or {}
+      local separator = (cl.config and cl.config.separator) or "  "
+      local sep_len = vim.fn.strdisplaywidth(separator)
+      local c = 1
+      for idx = 1, math.min(opts.segment_index - 1, #segments) do
+        local seg = segments[idx]
         if seg then
-          local seg_text = (seg.icon and (seg.icon .. " ") or "") .. (seg.text or "")
-          c = c + vim.fn.strdisplaywidth(seg_text) + 3
+          local is_leaf = (idx == #segments)
+          local piece = ""
+          if (not cl.config or cl.config.show_icons ~= false) and seg.icon and seg.icon ~= "" then
+            piece = piece .. seg.icon .. " "
+          end
+          local text = seg.text or ""
+          if cl.config and cl.config.show_labels and seg.label and seg.label ~= "" and seg.type == "symbol" then
+            text = seg.label .. " " .. text
+          end
+          piece = piece .. text
+          if cl.config and cl.config.show_buffer_flags and seg.type == "file" and src_buf and vim.api.nvim_buf_is_valid(src_buf) then
+            local is_modified = vim.bo[src_buf].modified
+            local is_ro = vim.bo[src_buf].readonly or not vim.bo[src_buf].modifiable
+            if is_modified then piece = piece .. " [●]" end
+            if is_ro then piece = piece .. " []" end
+          end
+          if cl.config and cl.config.show_scope_lines and is_leaf and seg.type == "symbol" and seg.lines and seg.lines > 1 then
+            piece = piece .. string.format(" (%dL)", seg.lines)
+          end
+          c = c + vim.fn.strdisplaywidth(piece) + sep_len
         end
       end
       col_offset = c
-    else
-      col_offset = 2
     end
   end
 
@@ -353,22 +385,24 @@ function M.open(opts)
   end
   local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
 
+  local wininfo = vim.fn.getwininfo(src_win)[1]
+  local has_winbar = (wininfo and wininfo.winbar == 1) or (vim.wo[src_win].winbar ~= "")
+  local win_row = has_winbar and 1 or 0
+
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "win",
     win = src_win,
-    row = 0,
+    row = win_row,
     col = col_offset,
     width = win_width,
     height = win_height,
     style = "minimal",
-    border = "rounded",
-    title = menu_title,
-    title_pos = "left",
+    border = "none",
     zindex = 250,
   })
 
   vim.wo[win].cursorline = true
-  vim.wo[win].winhighlight = "NormalFloat:NormalFloat,FloatBorder:FloatBorder,CursorLine:Visual"
+  vim.wo[win].winhighlight = "NormalFloat:Pmenu,FloatBorder:Pmenu,CursorLine:PmenuSel"
 
   -- Set initial cursor on current active symbol
   local buf_lines = vim.api.nvim_buf_line_count(buf)
