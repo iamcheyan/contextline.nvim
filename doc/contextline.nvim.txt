@@ -23,3 +23,12 @@ an optional `source`.
 
 The first matching custom provider wins. If no custom provider returns context,
 the optional nvim-navic provider and then the Tree-sitter provider are tried.
+
+Hierarchy menu                                               *contextline-menu*
+
+:ContextlineMenu toggles a borderless dropdown under the current breadcrumb.
+Clicking a winbar segment opens the same menu, flush left with that segment's
+chip. Placement uses nvim_eval_statusline() highlight columns, not screenchar()
+scans. The failure modes (UTF-8 byte indexes used as display columns, Nerd
+Font icons, Heirline padding, overflow moving col) and the current helper
+menu.win_col_for_segment() are documented in docs/menu-alignment.md.

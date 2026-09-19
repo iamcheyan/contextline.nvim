@@ -32,6 +32,12 @@ parser grammar.
 The language-specific design and the information users typically need from
 each language are documented in [Language context design](docs/language-context.md).
 
+Clicking a winbar segment opens a hierarchy dropdown that must sit flush
+left under that segment. Why that alignment failed (byte indexes treated
+as screen columns, Nerd Font icons, Heirline padding, overflow shifting
+`col`) and how it is measured now is documented in
+[Hierarchy menu left alignment](docs/menu-alignment.md).
+
 ## Installation
 
 With lazy.nvim:
