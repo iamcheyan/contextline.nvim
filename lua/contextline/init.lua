@@ -18,8 +18,16 @@ M.config = {
   use_navic = true,
   use_treesitter = true,
   hl_mode = true,
+  clickable = true,
   redraw = true,
 }
+
+_G.contextline_click = function(minwid, clicks, button, modifier)
+  local ok, menu = pcall(require, "contextline.menu")
+  if ok then
+    menu.open({ segment_index = minwid })
+  end
+end
 
 M._providers = {}
 M._setup = false
@@ -268,6 +276,11 @@ function M.format(info, opts)
       piece = piece .. (hl_mode and string.format(" %%#Comment#%s%%*", scope_str) or (" " .. scope_str))
     end
 
+    local clickable = opts.clickable ~= nil and opts.clickable or M.config.clickable
+    if clickable and hl_mode then
+      piece = string.format("%%%d@v:lua.contextline_click@%s%%X", i, piece)
+    end
+
     table.insert(formatted_parts, piece)
   end
 
@@ -338,6 +351,12 @@ function M.setup(opts)
       end,
     })
   end
+
+  vim.api.nvim_create_user_command("ContextlineMenu", function()
+    require("contextline.menu").toggle()
+  end, { desc = "Toggle Contextline Code Hierarchy Dropdown" })
 end
+
+M.menu = require("contextline.menu")
 
 return M
