@@ -87,11 +87,27 @@ local function custom_info(opts)
   return nil
 end
 
-function M.get_info(opts)
-  opts = vim.tbl_extend("force", { bufnr = 0, winid = vim.api.nvim_get_current_win() }, opts or {})
-  if opts.bufnr == 0 then
-    opts.bufnr = vim.api.nvim_get_current_buf()
+---Window whose statusline/winbar is being drawn. Heirline calls get() with no
+---winid while a dropdown float may be current; g:statusline_winid is the source.
+local function drawing_winid(opts)
+  if opts and opts.winid and opts.winid ~= 0 and vim.api.nvim_win_is_valid(opts.winid) then
+    return opts.winid
   end
+  local id = tonumber(vim.g.statusline_winid)
+  if id and id > 0 and vim.api.nvim_win_is_valid(id) then
+    return id
+  end
+  return vim.api.nvim_get_current_win()
+end
+
+function M.get_info(opts)
+  opts = opts or {}
+  local winid = drawing_winid(opts)
+  local bufnr = opts.bufnr
+  if not bufnr or bufnr == 0 then
+    bufnr = vim.api.nvim_win_get_buf(winid)
+  end
+  opts = vim.tbl_extend("force", opts, { bufnr = bufnr, winid = winid })
 
   local info = nil
 
@@ -253,7 +269,7 @@ function M.format(info, opts)
   local bufnr = info.bufnr or (opts.bufnr ~= 0 and opts.bufnr or vim.api.nvim_get_current_buf())
 
   ensure_highlights()
-  local target_win = opts.winid or vim.api.nvim_get_current_win()
+  local target_win = drawing_winid(opts)
   local formatted_parts = {}
   for i, seg in ipairs(segments) do
     local piece = ""

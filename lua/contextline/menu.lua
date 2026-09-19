@@ -246,18 +246,107 @@ local function filter_by_segment(all_items, cur_row, segment_index, info)
   return all_items, " 󰅩 Code Hierarchy "
 end
 
+local function refresh_winbar()
+  -- Heirline caches winbar components until CursorMoved/BufEnter. A winbar
+  -- click fires neither, so the chip would stay stale until the second click
+  -- unless we drop that cache ourselves.
+  pcall(function()
+    local heirline = require("heirline")
+    if heirline.winbar and heirline.winbar.broadcast then
+      heirline.winbar:broadcast(function(self)
+        self._win_cache = nil
+      end)
+    end
+  end)
+  pcall(vim.cmd, "redrawstatus")
+end
+
 function M.close()
   local cl_ok, cl = pcall(require, "contextline")
   if cl_ok then
     cl._active_menu_segment = nil
     cl._active_menu_win = nil
-    pcall(vim.cmd, "redraw")
+    refresh_winbar()
   end
   if M.active_win and vim.api.nvim_win_is_valid(M.active_win) then
     vim.api.nvim_win_close(M.active_win, true)
   end
   M.active_win = nil
   M.active_buf = nil
+end
+
+local ACTIVE_HL = "ContextlineActiveMenu"
+
+local function eval_winbar(src_win, str)
+  return vim.api.nvim_eval_statusline(str, {
+    winid = src_win,
+    use_winbar = true,
+    highlights = true,
+  })
+end
+
+local function highlight_display_col(ev, hl_name)
+  if not ev or not ev.highlights then
+    return nil
+  end
+  for _, h in ipairs(ev.highlights) do
+    local groups = h.groups or { h.group }
+    for _, g in ipairs(groups) do
+      if g == hl_name then
+        return vim.fn.strdisplaywidth(ev.str:sub(1, h.start))
+      end
+    end
+  end
+  return nil
+end
+
+---Window-relative 0-based column of the active winbar chip (flush left).
+function M.win_col_for_segment(src_win)
+  src_win = src_win or vim.api.nvim_get_current_win()
+  local cl = require("contextline")
+
+  local winbar = vim.wo[src_win].winbar
+  if winbar == nil or winbar == "" then
+    winbar = vim.o.winbar
+  end
+
+  if winbar ~= "" then
+    local col = highlight_display_col(eval_winbar(src_win, winbar), ACTIVE_HL)
+    if col then
+      return col
+    end
+  end
+
+  local cl_ev = eval_winbar(src_win, cl.get({ winid = src_win }))
+  local inner = highlight_display_col(cl_ev, ACTIVE_HL) or 0
+  if winbar == "" then
+    return inner
+  end
+
+  -- Heirline (and similar) may pad before the contextline component. Measure
+  -- that prefix against the inactive rendering so the extra chip spaces do
+  -- not break the substring search.
+  local saved_seg = cl._active_menu_segment
+  local saved_win = cl._active_menu_win
+  cl._active_menu_segment = nil
+  cl._active_menu_win = nil
+  local plain = vim.api.nvim_eval_statusline(cl.get({ winid = src_win }), {
+    winid = src_win,
+    use_winbar = true,
+  }).str
+  local full = vim.api.nvim_eval_statusline(winbar, {
+    winid = src_win,
+    use_winbar = true,
+  }).str
+  cl._active_menu_segment = saved_seg
+  cl._active_menu_win = saved_win
+
+  local p = vim.fn.stridx(full, plain)
+  local prefix = 0
+  if p > 0 then
+    prefix = vim.fn.strdisplaywidth(full:sub(1, p))
+  end
+  return prefix + inner
 end
 
 function M.open(opts)
@@ -272,7 +361,7 @@ function M.open(opts)
   if opts.segment_index then
     cl._active_menu_segment = opts.segment_index
     cl._active_menu_win = src_win
-    pcall(vim.cmd, "redraw")
+    refresh_winbar()
   end
 
   local all_items = M.get_symbols(src_buf)
@@ -307,8 +396,9 @@ function M.open(opts)
     local line_str = string.format(" %s%s %s", indent, item.icon or "󰘦", item.name)
     local lnum_str = string.format(":%d", item.lnum)
     table.insert(display_lines, line_str)
-    if #line_str + #lnum_str > max_len then
-      max_len = #line_str + #lnum_str
+    local visual = vim.fn.strdisplaywidth(line_str) + vim.fn.strdisplaywidth(lnum_str)
+    if visual > max_len then
+      max_len = visual
     end
 
     local icon_byte_start = 1 + #indent
@@ -324,7 +414,7 @@ function M.open(opts)
   -- Pad right side with line numbers
   local final_lines = {}
   for i, text in ipairs(display_lines) do
-    local pad = string.rep(" ", max_len - #text + 2)
+    local pad = string.rep(" ", math.max(2, max_len - vim.fn.strdisplaywidth(text) + 2))
     local lnum_str = string.format(":%d", items[i].lnum)
     local full_line = text .. pad .. lnum_str .. " "
     table.insert(final_lines, full_line)
@@ -353,105 +443,19 @@ function M.open(opts)
     vim.api.nvim_buf_add_highlight(buf, ns, h.hl_group, h.line, h.col_start, h.col_end)
   end
 
-local sep_codes = {
-  [vim.fn.char2nr("")] = true,
-  [vim.fn.char2nr("›")] = true,
-  [vim.fn.char2nr(">")] = true,
-}
-
-local function find_segment_win_col(src_win, seg, mouse_col)
-  local wininfo = vim.fn.getwininfo(src_win)[1]
-  if not wininfo then
-    return (mouse_col and mouse_col > 0) and math.max(0, mouse_col - 2) or 0
-  end
-
-  local winbar_row = wininfo.winrow
-  local win_col_start = wininfo.wincol
-  local win_width = wininfo.width
-
-  -- 1. If mouse_col is provided (user clicked with mouse):
-  -- Scan backward along exact screen cells until hitting the preceding separator.
-  -- This is 100% immune to substring duplicates, scrolling, or left truncation.
-  if mouse_col and mouse_col > 0 then
-    local c = math.min(mouse_col, win_width)
-    while c > 1 do
-      local abs_screen_col = win_col_start + c - 1
-      local code = vim.fn.screenchar(winbar_row, abs_screen_col)
-      if sep_codes[code] then
-        break
-      end
-      c = c - 1
-    end
-
-    local start_cell = c
-    local code_at_c = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
-    if sep_codes[code_at_c] then
-      start_cell = c + 1
-      local next_code = vim.fn.screenchar(winbar_row, win_col_start + start_cell - 1)
-      if next_code == 32 then
-        start_cell = start_cell + 1
-      end
-    end
-
-    return math.max(0, start_cell - 1)
-  end
-
-  -- 2. If opened via keyboard, find segment text on the winbar screen cells:
-  local search_text = seg and seg.text or ""
-  if search_text == "" then
-    return 0
-  end
-
-  local row_chars = {}
-  for c = 1, win_width do
-    local code = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
-    table.insert(row_chars, code > 0 and vim.fn.nr2char(code) or " ")
-  end
-  local row_text = table.concat(row_chars)
-
-  local p = row_text:find(search_text, 1, true)
-  if not p then
-    local first_word = search_text:match("^%S+") or search_text
-    p = row_text:find(first_word, 1, true)
-  end
-
-  if not p then
-    return 0
-  end
-
-  local c = p
-  while c > 1 do
-    local abs_screen_col = win_col_start + c - 1
-    local code = vim.fn.screenchar(winbar_row, abs_screen_col)
-    if sep_codes[code] then
-      break
-    end
-    c = c - 1
-  end
-
-  local start_cell = c
-  local code_at_c = vim.fn.screenchar(winbar_row, win_col_start + c - 1)
-  if sep_codes[code_at_c] then
-    start_cell = c + 1
-    local next_code = vim.fn.screenchar(winbar_row, win_col_start + start_cell - 1)
-    if next_code == 32 then
-      start_cell = start_cell + 1
-    end
-  end
-
-  return math.max(0, start_cell - 1)
-end
-
   local col_offset = opts.col
   if not col_offset then
-    local segments = info and (info.all or info.segments) or {}
-    local seg = opts.segment_index and segments[opts.segment_index] or nil
-    col_offset = find_segment_win_col(src_win, seg, opts.click_col)
+    col_offset = M.win_col_for_segment(src_win)
   end
 
+  local wininfo = vim.fn.getwininfo(src_win)[1]
+  local screen_left = col_offset
+  if wininfo then
+    screen_left = (wininfo.wincol - 1) + col_offset
+  end
   local win_width = math.min(max_len + 4, vim.o.columns - 4)
-  if col_offset + win_width > vim.o.columns - 2 then
-    col_offset = math.max(0, vim.o.columns - win_width - 2)
+  if screen_left + win_width > vim.o.columns - 2 then
+    win_width = math.max(8, vim.o.columns - 2 - screen_left)
   end
   local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
 
