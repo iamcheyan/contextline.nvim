@@ -6,14 +6,14 @@ local path_util = require("contextline.path")
 
 M.config = {
   separator = "  ",
-  show_path = true,
+  show_path = false,
   max_path_depth = 3,
-  show_file = true,
+  show_file = false,
   show_icons = true,
   show_labels = false,
   show_diagnostics = true,
   show_scope_lines = true,
-  show_buffer_flags = true,
+  show_buffer_flags = false,
   use_lsp = true,
   use_navic = true,
   use_treesitter = true,
