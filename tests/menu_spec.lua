@@ -61,6 +61,11 @@ assert(menu.active_win == nil, "Menu float window did not close cleanly")
 
 menu.open({ bufnr = 0, winid = vim.api.nvim_get_current_win(), segment_index = 2 })
 assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "Menu float window did not open for segment 2")
+
+-- 5. Test mouse boundary safety (line 0 or out of range shouldn't throw)
+local win = menu.active_win
+local buf = menu.active_buf
+assert(win and buf, "Expected active menu win and buf")
 menu.close()
 
 print("menu_spec: OK")

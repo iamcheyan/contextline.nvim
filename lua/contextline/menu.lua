@@ -371,19 +371,24 @@ function M.open(opts)
   vim.wo[win].winhighlight = "NormalFloat:NormalFloat,FloatBorder:FloatBorder,CursorLine:Visual"
 
   -- Set initial cursor on current active symbol
-  pcall(vim.api.nvim_win_set_cursor, win, { active_idx, 0 })
+  local buf_lines = vim.api.nvim_buf_line_count(buf)
+  local valid_active_idx = math.max(1, math.min(active_idx, buf_lines))
+  pcall(vim.api.nvim_win_set_cursor, win, { valid_active_idx, 0 })
 
   M.active_win = win
   M.active_buf = buf
 
   -- Keymaps for selection and exit
   local function jump()
-    local row = vim.api.nvim_win_get_cursor(win)[1]
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, win)
+    local row = (ok and cur) and cur[1] or 1
     local target = items[row]
     M.close()
     if target and target.lnum and vim.api.nvim_win_is_valid(src_win) then
       vim.api.nvim_set_current_win(src_win)
-      vim.api.nvim_win_set_cursor(src_win, { target.lnum, 0 })
+      local total_src_lines = vim.api.nvim_buf_line_count(src_buf)
+      local clamped_lnum = math.max(1, math.min(target.lnum, total_src_lines))
+      pcall(vim.api.nvim_win_set_cursor, src_win, { clamped_lnum, 0 })
       vim.cmd("normal! zz")
     end
   end
@@ -394,8 +399,10 @@ function M.open(opts)
   vim.keymap.set("n", "<LeftMouse>", function()
     local mouse_pos = vim.fn.getmousepos()
     if mouse_pos and mouse_pos.winid == win then
-      vim.api.nvim_win_set_cursor(win, { mouse_pos.line, 0 })
-      jump()
+      if mouse_pos.line >= 1 and mouse_pos.line <= #final_lines then
+        pcall(vim.api.nvim_win_set_cursor, win, { mouse_pos.line, 0 })
+        jump()
+      end
     else
       M.close()
     end
