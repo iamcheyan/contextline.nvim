@@ -22,11 +22,20 @@ M.config = {
   redraw = true,
 }
 
+M._active_menu_segment = nil
+M._active_menu_win = nil
+
+local function ensure_highlights()
+  pcall(vim.api.nvim_set_hl, 0, "ContextlineActiveMenu", { link = "Pmenu", default = true })
+end
+
 _G.contextline_click = function(minwid, clicks, button, modifier)
   local mousepos = vim.fn.getmousepos()
   local winid = vim.api.nvim_get_current_win()
+  local click_col = nil
   if mousepos and mousepos.winid and mousepos.winid > 0 then
     winid = mousepos.winid
+    click_col = mousepos.wincol
   end
 
   local ok, menu = pcall(require, "contextline.menu")
@@ -34,6 +43,7 @@ _G.contextline_click = function(minwid, clicks, button, modifier)
     menu.open({
       winid = winid,
       segment_index = minwid,
+      click_col = click_col,
     })
   end
 end
@@ -242,29 +252,37 @@ function M.format(info, opts)
 
   local bufnr = info.bufnr or (opts.bufnr ~= 0 and opts.bufnr or vim.api.nvim_get_current_buf())
 
+  ensure_highlights()
+  local target_win = opts.winid or vim.api.nvim_get_current_win()
   local formatted_parts = {}
   for i, seg in ipairs(segments) do
     local piece = ""
     local is_leaf = (i == #segments)
-
-    if show_icons and seg.icon and seg.icon ~= "" then
-      if hl_mode and seg.icon_hl then
-        piece = string.format("%%#%s#%s%%*", seg.icon_hl, seg.icon) .. " "
-      else
-        piece = seg.icon .. " "
-      end
-    end
+    local is_active = (M._active_menu_segment == i and (not M._active_menu_win or M._active_menu_win == target_win))
 
     local text = seg.text or ""
     if show_labels and seg.label and seg.label ~= "" and seg.type == "symbol" then
       text = seg.label .. " " .. text
     end
 
-    if hl_mode then
-      local hl = is_leaf and (seg.hl or "Bold") or (seg.hl or "Normal")
-      piece = piece .. string.format("%%#%s#%s%%*", hl, text)
+    if is_active and hl_mode then
+      local icon_part = (show_icons and seg.icon and seg.icon ~= "") and (seg.icon .. " ") or ""
+      piece = string.format("%%#ContextlineActiveMenu# %s%s %%*", icon_part, text)
     else
-      piece = piece .. text
+      if show_icons and seg.icon and seg.icon ~= "" then
+        if hl_mode and seg.icon_hl then
+          piece = string.format("%%#%s#%s%%*", seg.icon_hl, seg.icon) .. " "
+        else
+          piece = seg.icon .. " "
+        end
+      end
+
+      if hl_mode then
+        local hl = is_leaf and (seg.hl or "Bold") or (seg.hl or "Normal")
+        piece = piece .. string.format("%%#%s#%s%%*", hl, text)
+      else
+        piece = piece .. text
+      end
     end
 
     -- Buffer flags indicator for file segment

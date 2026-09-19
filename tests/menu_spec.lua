@@ -66,6 +66,10 @@ assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "M
 local win = menu.active_win
 local buf = menu.active_buf
 assert(win and buf, "Expected active menu win and buf")
+assert(contextline._active_menu_segment == 2, "Active menu segment should be 2")
+local cfg = vim.api.nvim_win_get_config(win)
+assert(cfg.row == 0, "Floating window should be tightly anchored at row 0")
 menu.close()
+assert(contextline._active_menu_segment == nil, "Active menu segment should be nil after close")
 
 print("menu_spec: OK")

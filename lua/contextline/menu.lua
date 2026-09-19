@@ -247,6 +247,12 @@ local function filter_by_segment(all_items, cur_row, segment_index, info)
 end
 
 function M.close()
+  local cl_ok, cl = pcall(require, "contextline")
+  if cl_ok then
+    cl._active_menu_segment = nil
+    cl._active_menu_win = nil
+    pcall(vim.cmd, "redraw")
+  end
   if M.active_win and vim.api.nvim_win_is_valid(M.active_win) then
     vim.api.nvim_win_close(M.active_win, true)
   end
@@ -261,6 +267,13 @@ function M.open(opts)
 
   -- Close existing
   M.close()
+
+  local cl = require("contextline")
+  if opts.segment_index then
+    cl._active_menu_segment = opts.segment_index
+    cl._active_menu_win = src_win
+    pcall(vim.cmd, "redraw")
+  end
 
   local all_items = M.get_symbols(src_buf)
   if #all_items == 0 then
@@ -377,6 +390,15 @@ function M.open(opts)
       end
       col_offset = c
     end
+
+    if opts.click_col and opts.click_col > 0 then
+      local segments = info and (info.all or info.segments) or {}
+      local seg = segments[opts.segment_index]
+      local seg_w = seg and vim.fn.strdisplaywidth((seg.icon and (seg.icon .. " ") or "") .. (seg.text or "")) or 15
+      if col_offset > opts.click_col or opts.click_col > col_offset + seg_w + 4 then
+        col_offset = math.max(1, opts.click_col - 2)
+      end
+    end
   end
 
   local win_width = math.min(max_len + 4, vim.o.columns - 4)
@@ -385,14 +407,11 @@ function M.open(opts)
   end
   local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
 
-  local wininfo = vim.fn.getwininfo(src_win)[1]
-  local has_winbar = (wininfo and wininfo.winbar == 1) or (vim.wo[src_win].winbar ~= "")
-  local win_row = has_winbar and 1 or 0
-
+  -- row = 0 attaches the floating window directly to the bottom of the winbar with 0 gap
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "win",
     win = src_win,
-    row = win_row,
+    row = 0,
     col = col_offset,
     width = win_width,
     height = win_height,
