@@ -28,6 +28,9 @@ method, module, interface, struct, enum, trait, and implementation nodes in
 languages such as Python, Lua, JavaScript/TypeScript, Bash, C/C++, Go, Rust,
 Ruby, and Java, subject to the installed parser grammar.
 
+The language-specific design and the information users typically need from
+each language are documented in [Language context design](docs/language-context.md).
+
 ## Installation
 
 With lazy.nvim:
@@ -89,6 +92,9 @@ The plugin intentionally separates display from parsing:
 ```bash
 tests/test.sh
 ```
+
+The multilingual fixtures used for manual testing live in the companion
+[`night-batch-lab`](https://github.com/iamcheyan/night-batch-lab) project.
 
 The repository is developed with `cobol.nvim`, `batch.nvim`, and the
 `night-batch-lab` practice project.

@@ -4,6 +4,7 @@ local navic = require("contextline.navic")
 
 M.config = {
   separator = " | ",
+  show_labels = true,
   redraw = true,
   use_navic = true,
   use_treesitter = true,
@@ -79,7 +80,11 @@ function M.format(info, opts)
     table.insert(parts, info.language)
   end
   for _, segment in ipairs(info.segments or {}) do
-    table.insert(parts, segment.text)
+    local text = segment.text
+    if M.config.show_labels and segment.label and segment.label ~= "" then
+      text = segment.label .. " " .. text
+    end
+    table.insert(parts, text)
   end
   return table.concat(parts, separator)
 end
