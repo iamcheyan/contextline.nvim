@@ -1,0 +1,25 @@
+*contextline.nvim*
+
+contextline.nvim                                           *contextline*
+
+Provides current code context for statuslines, Winbars, and other Neovim UI.
+It does not replace a statusline framework.
+
+API                                                         *contextline-api*
+
+require("contextline").setup({})
+require("contextline").get_info({ bufnr = 0, winid = 0 })
+require("contextline").get()
+require("contextline").format(info)
+require("contextline").component()
+require("contextline").register(name, provider)
+require("contextline").unregister(name)
+
+Provider contract                                            *contextline-provider*
+
+A provider is a table with `filetypes` and `get_info`. `get_info` receives an
+options table and returns nil or a table containing `language`, `segments`, and
+an optional `source`.
+
+The first matching custom provider wins. If no custom provider returns context,
+the optional nvim-navic provider and then the Tree-sitter provider are tried.
