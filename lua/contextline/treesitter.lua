@@ -15,6 +15,7 @@ local language_names = {
 }
 
 local symbol_nodes = {
+  class = true,
   class_declaration = true,
   class_definition = true,
   class_specifier = true,
@@ -29,7 +30,10 @@ local symbol_nodes = {
   interface_declaration = true,
   method_declaration = true,
   method_definition = true,
+  method = true,
   namespace_declaration = true,
+  ["function"] = true,
+  singleton_method = true,
   struct_item = true,
   struct_specifier = true,
   trait_item = true,
