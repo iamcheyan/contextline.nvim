@@ -11,6 +11,9 @@ M.config = {
   show_file = true,
   show_icons = true,
   show_labels = false,
+  show_diagnostics = true,
+  show_scope_lines = true,
+  show_buffer_flags = true,
   use_lsp = true,
   use_navic = true,
   use_treesitter = true,
@@ -137,8 +140,51 @@ function M.get_info(opts)
     end
   end
 
+  info.bufnr = opts.bufnr
   info.all = all
   return info
+end
+
+local function get_diagnostics_badges(bufnr, hl_mode)
+  if not vim.diagnostic or not vim.diagnostic.get or not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return ""
+  end
+
+  local ok, diags = pcall(vim.diagnostic.get, bufnr)
+  if not ok or not diags or #diags == 0 then
+    return ""
+  end
+
+  local errors = 0
+  local warnings = 0
+  for _, d in ipairs(diags) do
+    if d.severity == vim.diagnostic.severity.ERROR then
+      errors = errors + 1
+    elseif d.severity == vim.diagnostic.severity.WARN then
+      warnings = warnings + 1
+    end
+  end
+
+  local parts = {}
+  if errors > 0 then
+    if hl_mode then
+      table.insert(parts, string.format("%%#DiagnosticError# %d%%*", errors))
+    else
+      table.insert(parts, string.format(" %d", errors))
+    end
+  end
+  if warnings > 0 then
+    if hl_mode then
+      table.insert(parts, string.format("%%#DiagnosticWarn# %d%%*", warnings))
+    else
+      table.insert(parts, string.format(" %d", warnings))
+    end
+  end
+
+  if #parts == 0 then
+    return ""
+  end
+  return " " .. table.concat(parts, " ")
 end
 
 function M.format(info, opts)
@@ -167,12 +213,17 @@ function M.format(info, opts)
   local separator = opts.separator or M.config.separator
   local show_icons = opts.show_icons ~= nil and opts.show_icons or M.config.show_icons
   local show_labels = opts.show_labels ~= nil and opts.show_labels or M.config.show_labels
+  local show_diagnostics = opts.show_diagnostics ~= nil and opts.show_diagnostics or M.config.show_diagnostics
+  local show_scope_lines = opts.show_scope_lines ~= nil and opts.show_scope_lines or M.config.show_scope_lines
+  local show_buffer_flags = opts.show_buffer_flags ~= nil and opts.show_buffer_flags or M.config.show_buffer_flags
   local hl_mode = opts.hl_mode ~= nil and opts.hl_mode or M.config.hl_mode
 
   local segments = info.all or info.segments or {}
   if #segments == 0 then
     return ""
   end
+
+  local bufnr = info.bufnr or (opts.bufnr ~= 0 and opts.bufnr or vim.api.nvim_get_current_buf())
 
   local formatted_parts = {}
   for i, seg in ipairs(segments) do
@@ -199,11 +250,39 @@ function M.format(info, opts)
       piece = piece .. text
     end
 
+    -- Buffer flags indicator for file segment
+    if show_buffer_flags and seg.type == "file" and bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+      local is_modified = vim.bo[bufnr].modified
+      local is_ro = vim.bo[bufnr].readonly or not vim.bo[bufnr].modifiable
+      if is_modified then
+        piece = piece .. (hl_mode and " %#WarningMsg#[●]%*" or " [●]")
+      end
+      if is_ro then
+        piece = piece .. (hl_mode and " %#Comment#[]%*" or " []")
+      end
+    end
+
+    -- Scope line count for the leaf symbol
+    if show_scope_lines and is_leaf and seg.type == "symbol" and seg.lines and seg.lines > 1 then
+      local scope_str = string.format("(%dL)", seg.lines)
+      piece = piece .. (hl_mode and string.format(" %%#Comment#%s%%*", scope_str) or (" " .. scope_str))
+    end
+
     table.insert(formatted_parts, piece)
   end
 
   local sep_str = hl_mode and string.format("%%#Comment#%s%%*", separator) or separator
-  return table.concat(formatted_parts, sep_str)
+  local result = table.concat(formatted_parts, sep_str)
+
+  -- Diagnostics badge at the end of the breadcrumb
+  if show_diagnostics and bufnr then
+    local badge = get_diagnostics_badges(bufnr, hl_mode)
+    if badge ~= "" then
+      result = result .. badge
+    end
+  end
+
+  return result
 end
 
 function M.get(opts)
@@ -216,10 +295,9 @@ function M.component(opts)
   end
 end
 
--- First-class Heirline component factory with per-segment highlights and clean separation
+-- First-class Heirline component factory
 function M.heirline_component(opts)
   opts = opts or {}
-  local sep_text = opts.separator or M.config.separator
   return {
     condition = function()
       if vim.bo.buftype ~= "" then
@@ -227,46 +305,10 @@ function M.heirline_component(opts)
       end
       return M.get_info(opts) ~= nil
     end,
-    init = function(self)
-      local info = M.get_info(opts)
-      self.child = nil
-      if not info or not info.all or #info.all == 0 then
-        return
-      end
-
-      local children = {}
-      local total = #info.all
-      for i, seg in ipairs(info.all) do
-        local is_leaf = (i == total)
-        local child = {
-          {
-            condition = function()
-              return seg.icon ~= nil and seg.icon ~= ""
-            end,
-            provider = seg.icon and (seg.icon .. " ") or "",
-            hl = seg.icon_hl or seg.hl or "Normal",
-          },
-          {
-            provider = seg.text or "",
-            hl = is_leaf and { fg = "fg", bold = true } or (seg.hl or "Normal"),
-          },
-        }
-
-        table.insert(children, child)
-
-        if i < total then
-          table.insert(children, {
-            provider = sep_text,
-            hl = "Comment",
-          })
-        end
-      end
-      self.child = self:new(children, 1)
+    provider = function()
+      return M.get(opts)
     end,
-    provider = function(self)
-      return self.child and self.child:eval() or ""
-    end,
-    update = { "CursorMoved", "CursorMovedI", "BufEnter" },
+    update = { "CursorMoved", "CursorMovedI", "BufEnter", "DiagnosticChanged" },
   }
 end
 

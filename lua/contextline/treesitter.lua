@@ -9,14 +9,18 @@ local language_names = {
   html = "HTML",
   java = "JAVA",
   javascript = "JAVASCRIPT",
+  json = "JSON",
   lua = "LUA",
+  markdown = "MARKDOWN",
   python = "PYTHON",
   ruby = "RUBY",
   rust = "RUST",
   sql = "SQL",
+  toml = "TOML",
   tsx = "TSX",
-  xml = "XML",
   typescript = "TYPESCRIPT",
+  xml = "XML",
+  yaml = "YAML",
 }
 
 local symbol_nodes = {
@@ -35,28 +39,46 @@ local symbol_nodes = {
   public_field_definition = true,
   property_signature = true,
   function_declaration = true,
+  -- Java
+  constructor_declaration = true,
+  method_declaration = true,
+  field_declaration = true,
+  record_declaration = true,
+  -- Go
+  type_spec = true,
+  -- Ruby
+  class = true,
+  module = true,
+  method = true,
+  singleton_method = true,
   -- Rust
+  mod_item = true,
   struct_item = true,
   enum_item = true,
   trait_item = true,
   impl_item = true,
   function_item = true,
   type_item = true,
-  -- Go
-  type_spec = true,
-  -- Java / C / C++
+  -- C / C++
   class_specifier = true,
   struct_specifier = true,
   enum_specifier = true,
-  record_declaration = true,
   namespace_definition = true,
   namespace_declaration = true,
   package_clause = true,
+  package_declaration = true,
+  function_definition = true,
   -- SQL & HTML
   element = true,
   cte = true,
   create_table = true,
+  create_view = true,
   select_statement = true,
+  -- Structured configs & Docs
+  pair = true,
+  block_mapping_pair = true,
+  table = true,
+  section = true,
 }
 
 local function short_text(node, bufnr)
@@ -87,7 +109,7 @@ local function is_nested_in_type(node)
   local parent = node:parent()
   while parent do
     local kind = parent:type()
-    if kind:match("class") or kind:match("struct") or kind:match("interface") or kind:match("trait") or kind:match("impl") then
+    if kind:match("class") or kind:match("struct") or kind:match("interface") or kind:match("trait") or kind:match("impl") or kind:match("record") then
       return true
     end
     parent = parent:parent()
@@ -97,7 +119,6 @@ end
 
 local function is_python_property(node)
   local parent = node:parent()
-  -- Check decorated definition for @property
   while parent do
     if parent:type() == "decorated_definition" then
       for child in parent:iter_children() do
@@ -149,10 +170,133 @@ local function unwrap_decorated(node)
   return node
 end
 
-local function name_node(node)
+local function html_element_text(node, bufnr)
+  local tag_name = ""
+  local id_val = ""
+  local class_val = ""
+
+  for child in node:iter_children() do
+    local ctype = child:type()
+    if ctype == "start_tag" or ctype == "self_closing_tag" then
+      for c in child:iter_children() do
+        local ct = c:type()
+        if ct == "tag_name" then
+          tag_name = vim.treesitter.get_node_text(c, bufnr)
+        elseif ct == "attribute" then
+          local an, av
+          for ac in c:iter_children() do
+            local act = ac:type()
+            if act == "attribute_name" then
+              an = vim.treesitter.get_node_text(ac, bufnr)
+            elseif act == "quoted_attribute_value" or act == "attribute_value" then
+              av = vim.treesitter.get_node_text(ac, bufnr):gsub("[\"']", "")
+            end
+          end
+          if an == "id" and av and id_val == "" then
+            id_val = av
+          elseif an == "class" and av and class_val == "" then
+            class_val = av:match("%S+") or av
+          end
+        end
+      end
+      break
+    end
+  end
+
+  if tag_name == "html" or tag_name == "body" or tag_name == "head" then
+    return nil -- Skip boring top-level boilerplate
+  end
+
+  if id_val ~= "" then
+    return tag_name .. "#" .. id_val
+  elseif class_val ~= "" then
+    return tag_name .. "." .. class_val
+  end
+  return tag_name
+end
+
+local function go_method_text(node, bufnr)
+  local name_node = node:field("name")[1]
+  local name = name_node and vim.treesitter.get_node_text(name_node, bufnr) or ""
+  local recv = node:field("receiver")[1]
+  if recv then
+    local recv_type = first_descendant(recv, "type_identifier")
+    if recv_type then
+      local rt = vim.treesitter.get_node_text(recv_type, bufnr)
+      return "(" .. rt .. ")." .. name
+    end
+  end
+  return name
+end
+
+local function c_function_text(node, bufnr)
+  local decl = node:field("declarator")[1]
+  while decl and (decl:type() == "function_declarator" or decl:type() == "pointer_declarator") do
+    local inner = decl:field("declarator")[1]
+    if not inner then break end
+    decl = inner
+  end
+  if decl then
+    return vim.treesitter.get_node_text(decl, bufnr)
+  end
+  return nil
+end
+
+local function markdown_section_text(node, bufnr)
+  for child in node:iter_children() do
+    if child:type() == "atx_heading" then
+      local hc = child:field("heading_content")[1]
+      if hc then
+        return short_text(hc, bufnr)
+      end
+    end
+  end
+  return nil
+end
+
+local function key_value_text(node, bufnr)
+  local ntype = node:type()
+  if ntype == "pair" or ntype == "block_mapping_pair" then
+    local k = node:field("key")[1]
+    if k then
+      local raw = vim.treesitter.get_node_text(k, bufnr):gsub('^["\']', ''):gsub('["\']$', '')
+      return raw:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+  end
+  if ntype == "table" then
+    local k = first_descendant(node, "bare_key")
+    if k then
+      return vim.treesitter.get_node_text(k, bufnr)
+    end
+  end
+  return nil
+end
+
+local function name_node(node, bufnr)
   local ntype = node:type()
   if ntype == "element" then
-    return first_descendant(node, "tag_name") or node
+    return html_element_text(node, bufnr)
+  end
+  if ntype == "section" then
+    return markdown_section_text(node, bufnr)
+  end
+  if ntype == "pair" or ntype == "block_mapping_pair" or ntype == "table" then
+    local t = key_value_text(node, bufnr)
+    if t then return t end
+  end
+  if ntype == "function_definition" then
+    local c_fn = c_function_text(node, bufnr)
+    if c_fn then return c_fn end
+  end
+  if ntype == "method_declaration" and vim.bo[bufnr].filetype == "go" then
+    return go_method_text(node, bufnr)
+  end
+  if ntype == "cte" then
+    for _, child in ipairs(node:named_children()) do
+      if child:type() == "identifier" then
+        return child
+      end
+    end
   end
   if ntype == "assignment" then
     local left = node:field("left")[1]
@@ -166,13 +310,20 @@ local function name_node(node)
       return name
     end
   end
+  if ntype == "field_declaration" then
+    local decl = first_descendant(node, "variable_declarator")
+    if decl then
+      local n = decl:field("name")[1]
+      if n then return n end
+    end
+  end
   if ntype == "impl_item" then
     local tr = node:field("trait")[1]
     local tp = node:field("type")[1]
     if tr and tp then
-      return node -- formatted specially in symbol_name
+      return "impl " .. short_text(tr, bufnr) .. " for " .. short_text(tp, bufnr)
     elseif tp then
-      return tp
+      return "impl " .. short_text(tp, bufnr)
     end
   end
   for _, field in ipairs({ "name", "declarator", "type" }) do
@@ -187,6 +338,9 @@ end
 local function symbol_label(node)
   local kind = node:type()
   if kind == "element" then return "element" end
+  if kind == "section" then return "heading" end
+  if kind == "pair" or kind == "block_mapping_pair" then return "key" end
+  if kind == "table" then return "table" end
   if kind:match("class") then return "class" end
   if kind:match("record") then return "record" end
   if kind:match("interface") then return "interface" end
@@ -195,16 +349,18 @@ local function symbol_label(node)
   if kind == "impl_item" then return "impl" end
   if kind:match("enum_assignment") or kind == "enum_item" then return "enum_member" end
   if kind:match("enum") then return "enum" end
-  if kind:match("namespace") or kind == "module" then return "namespace" end
-  if kind == "package_clause" then return "package" end
+  if kind:match("namespace") or kind == "module" or kind == "mod_item" then return "namespace" end
+  if kind:match("package") then return "package" end
   if kind:match("type_alias") or kind == "type_declaration" or kind == "type_spec" or kind == "type_item" then
     return "type"
   end
   if kind == "property_signature" or kind == "public_field_definition" then return "property" end
-  if kind == "assignment" then return "field" end
+  if kind == "assignment" or kind == "field_declaration" then return "field" end
+  if kind == "constructor_declaration" then return "constructor" end
   if kind == "cte" then return "cte" end
   if kind == "select_statement" then return "query" end
   if kind == "create_table" then return "table" end
+  if kind == "create_view" then return "view" end
   if is_python_property(node) then return "property" end
   if kind:match("method") or (kind:match("function") and is_nested_in_type(node)) then return "method" end
   if kind:match("function") or kind:match("declaration") or kind:match("definition") or kind:match("item") then
@@ -239,12 +395,15 @@ function M.get_info(opts)
   while current do
     local cur = unwrap_decorated(current)
     local ctype = cur:type()
-    if symbol_nodes[ctype] then
+    if ctype == "module" then
+      if cur:field("name")[1] then
+        table.insert(nodes, 1, cur)
+      end
+    elseif symbol_nodes[ctype] then
       table.insert(nodes, 1, cur)
     elseif is_class_field_assignment(cur) then
       table.insert(nodes, 1, cur)
     elseif ctype == "variable_declarator" then
-      -- Variable assigned to arrow function or class
       local value = cur:field("value")[1]
       if value and (value:type() == "arrow_function" or value:type() == "function_expression" or value:type() == "class_expression") then
         table.insert(nodes, 1, cur)
@@ -262,9 +421,18 @@ function M.get_info(opts)
   for _, symbol in ipairs(nodes) do
     local label = symbol_label(symbol)
     local meta = icons.get_symbol_meta(label)
-    local name = short_text(name_node(symbol), bufnr)
+    local extracted = name_node(symbol, bufnr)
+    local name = ""
+    if type(extracted) == "string" then
+      name = extracted
+    elseif extracted and type(extracted) ~= "table" or (extracted and extracted.type) then
+      name = short_text(extracted, bufnr)
+    end
+
     if name ~= "" and not seen[name] then
       seen[name] = true
+      local start_row, _, end_row, _ = symbol:range()
+      local line_count = (end_row - start_row) + 1
       table.insert(segments, {
         text = name,
         kind = symbol:type(),
@@ -273,7 +441,9 @@ function M.get_info(opts)
         icon = meta.icon,
         icon_hl = meta.hl,
         hl = meta.hl,
-        lnum = symbol:start() + 1,
+        lnum = start_row + 1,
+        end_lnum = end_row + 1,
+        lines = line_count,
         type = "symbol",
       })
     end

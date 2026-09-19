@@ -54,6 +54,12 @@ M.symbol_map = {
   table = { icon = "", hl = "Type" },
   query = { icon = "󰆼", hl = "Keyword" },
   cte = { icon = "󰆼", hl = "Keyword" },
+  key = { icon = "󰌋", hl = "Identifier" },
+  mapping = { icon = "󰅩", hl = "Type" },
+  heading = { icon = "󰉫", hl = "Title" },
+  section = { icon = "󰉫", hl = "Title" },
+  impl = { icon = "󰠱", hl = "Type" },
+  view = { icon = "󰈈", hl = "Type" },
 }
 
 function M.get_symbol_meta(kind_or_label)
