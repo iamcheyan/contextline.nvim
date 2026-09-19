@@ -23,5 +23,10 @@ assert(info.segments[1].label == "class", "Python class label was not assigned")
 assert(info.segments[1].lnum == 1, "Python class line was not preserved")
 assert(info.segments[2].text == "run", "Python method was not detected")
 assert(info.segments[2].label == "method", "Python method label was not assigned")
-assert(contextline.format(info) == "PYTHON | class Demo | method run", "Python hierarchy formatting is incomplete")
+assert(contextline.format(info, { plain = true, show_labels = true }) == "PYTHON | class Demo | method run", "Python hierarchy formatting is incomplete")
+
+-- Verify rich icons and symbol metadata
+assert(info.segments[1].icon ~= nil and info.segments[1].icon ~= "", "Class icon was not assigned")
+assert(info.segments[2].icon ~= nil and info.segments[2].icon ~= "", "Method icon was not assigned")
+
 print("treesitter_spec: OK")
