@@ -23,3 +23,10 @@ local vscode_fmt = contextline.format(info, { hl_mode = false })
 assert(vscode_fmt:find("Demo") and vscode_fmt:find("run"), "vscode context formatting is missing symbols")
 
 print("core_spec: OK")
+
+-- A file with no provider result must not produce a language-only context
+-- component; Heirline uses nil to decide whether the bar is visible.
+vim.bo.filetype = "plain_no_context"
+assert(contextline.get_info({ bufnr = 0, winid = 0 }) == nil, "empty context should be hidden")
+
+print("empty_context_spec: OK")

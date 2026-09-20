@@ -138,18 +138,23 @@ function M.get_info(opts)
     end
   end
 
-  -- If neither provided segments, create a minimal base info if buffer is a valid file
+  -- Do not turn an ordinary file with no identifiable scope into a visible
+  -- component.  The consumers use a non-nil info value as the visibility
+  -- condition, so an empty fallback would leave a blank context bar behind.
+  -- Path/file-only displays remain opt-in and are still allowed to create the
+  -- base info below when explicitly requested.
   if not info then
     local ft = filetype(opts.bufnr)
-    if ft and ft ~= "" then
-      info = {
-        language = ft:upper(),
-        segments = {},
-        source = "file",
-      }
-    else
+    local show_path = opts.show_path ~= nil and opts.show_path or M.config.show_path
+    local show_file = opts.show_file ~= nil and opts.show_file or M.config.show_file
+    if not ft or ft == "" or (not show_path and not show_file) then
       return nil
     end
+    info = {
+      language = ft:upper(),
+      segments = {},
+      source = "file",
+    }
   end
 
   -- Attach path and file segments
