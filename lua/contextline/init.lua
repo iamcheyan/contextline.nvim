@@ -386,7 +386,7 @@ function M.setup(opts)
     vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {
       group = group,
       callback = function()
-        vim.cmd("redrawstatus")
+        pcall(vim.cmd, "redrawstatus")
       end,
     })
   end
