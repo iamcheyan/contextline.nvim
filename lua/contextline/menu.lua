@@ -5,6 +5,54 @@ local treesitter = require("contextline.treesitter")
 -- Active popup state
 M.active_win = nil
 M.active_buf = nil
+M._source_mappings = nil
+M._autocmd_group = nil
+
+local function map_flag(value)
+  return value == true or value == 1
+end
+
+local function install_source_mappings(bufnr, handlers)
+  local saved = {}
+  for lhs, callback in pairs(handlers) do
+    saved[lhs] = {}
+    for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(bufnr, "n")) do
+      if mapping.lhs == lhs then
+        table.insert(saved[lhs], mapping)
+      end
+    end
+    vim.keymap.set("n", lhs, callback, {
+      buffer = bufnr,
+      nowait = true,
+      silent = true,
+      desc = "Contextline menu navigation",
+    })
+  end
+  M._source_mappings = { bufnr = bufnr, saved = saved }
+end
+
+local function restore_source_mappings()
+  local state = M._source_mappings
+  M._source_mappings = nil
+  if not state or not vim.api.nvim_buf_is_valid(state.bufnr) then return end
+
+  for lhs, mappings in pairs(state.saved) do
+    pcall(vim.keymap.del, "n", lhs, { buffer = state.bufnr })
+    for _, mapping in ipairs(mappings) do
+      local rhs = mapping.callback or mapping.rhs
+      if rhs ~= nil then
+        pcall(vim.keymap.set, "n", mapping.lhs or lhs, rhs, {
+          buffer = state.bufnr,
+          expr = map_flag(mapping.expr),
+          nowait = map_flag(mapping.nowait),
+          silent = map_flag(mapping.silent),
+          remap = not map_flag(mapping.noremap),
+          desc = mapping.desc,
+        })
+      end
+    end
+  end
+end
 
 local function short_text(node, bufnr)
   if not node then return "" end
@@ -262,6 +310,11 @@ local function refresh_winbar()
 end
 
 function M.close()
+  if M._autocmd_group then
+    pcall(vim.api.nvim_del_augroup_by_id, M._autocmd_group)
+    M._autocmd_group = nil
+  end
+  restore_source_mappings()
   local cl_ok, cl = pcall(require, "contextline")
   if cl_ok then
     cl._active_menu_segment = nil
@@ -461,7 +514,10 @@ function M.open(opts)
   local win_height = math.min(#final_lines, math.floor(vim.o.lines * 0.55))
 
   -- row = 0 attaches the floating window directly to the bottom of the winbar with 0 gap
-  local win = vim.api.nvim_open_win(buf, true, {
+  -- Leave focus in the source window.  Focusing the unlisted popup buffer
+  -- makes Neovim mark the source winbar inactive and changes BufferLine's
+  -- selected tab while the user is only opening the hierarchy menu.
+  local win = vim.api.nvim_open_win(buf, false, {
     relative = "win",
     win = src_win,
     row = 0,
@@ -474,6 +530,11 @@ function M.open(opts)
   })
 
   vim.wo[win].cursorline = true
+  vim.wo[win].cursorcolumn = false
+  vim.wo[win].winbar = ""
+  vim.wo[win].scrolloff = 0
+  vim.wo[win].sidescrolloff = 0
+  vim.wo[win].wrap = false
   vim.wo[win].winhighlight = "NormalFloat:Pmenu,FloatBorder:Pmenu,CursorLine:PmenuSel"
 
   -- Set initial cursor on current active symbol
@@ -502,7 +563,7 @@ function M.open(opts)
   local kmopts = { buffer = buf, nowait = true, silent = true }
   vim.keymap.set("n", "<CR>", jump, kmopts)
   vim.keymap.set("n", "<Space>", jump, kmopts)
-  vim.keymap.set("n", "<LeftMouse>", function()
+  local function mouse_select()
     local mouse_pos = vim.fn.getmousepos()
     if mouse_pos and mouse_pos.winid == win then
       if mouse_pos.line >= 1 and mouse_pos.line <= #final_lines then
@@ -511,18 +572,91 @@ function M.open(opts)
       end
     else
       M.close()
+      -- Replay the click after restoring the user's mappings so the editor,
+      -- tabs, and other windows still receive their normal mouse action.
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<LeftMouse>", true, false, true), "m", false)
     end
-  end, kmopts)
+  end
+
+  local function mouse_scroll(delta, key)
+    local mouse_pos = vim.fn.getmousepos()
+    local popup_pos = vim.api.nvim_win_get_position(win)
+    local popup_row, popup_col = popup_pos[1], popup_pos[2]
+    local inside_popup = mouse_pos and mouse_pos.screenrow >= popup_row + 1
+      and mouse_pos.screenrow <= popup_row + win_height
+      and mouse_pos.screencol >= popup_col + 1
+      and mouse_pos.screencol <= popup_col + win_width
+
+    if inside_popup then
+      -- A wheel event over a fully visible menu should not scroll the source
+      -- buffer behind it. Move the popup viewport only when rows overflow.
+      if #final_lines <= win_height then return end
+
+      local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+      local max_topline = math.max(1, #final_lines - win_height + 1)
+      local topline = math.max(1, math.min(max_topline, view.topline + delta * 3))
+      view.topline = topline
+      view.topfill = 0
+      vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
+
+      -- Keep the highlighted menu selection visible after moving its viewport.
+      local cursor = vim.api.nvim_win_get_cursor(win)
+      local last_visible = math.min(#final_lines, topline + win_height - 1)
+      local row = math.max(topline, math.min(last_visible, cursor[1]))
+      if row ~= cursor[1] then
+        pcall(vim.api.nvim_win_set_cursor, win, { row, 0 })
+      end
+      return
+    end
+
+    -- The source buffer owns focus while the popup is open, so replay wheel
+    -- events outside the popup after removing our temporary mapping.
+    M.close()
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "m", false)
+  end
+
+  vim.keymap.set("n", "<LeftMouse>", mouse_select, kmopts)
+  vim.keymap.set("n", "<ScrollWheelUp>", function() mouse_scroll(-1, "<ScrollWheelUp>") end, kmopts)
+  vim.keymap.set("n", "<ScrollWheelDown>", function() mouse_scroll(1, "<ScrollWheelDown>") end, kmopts)
   vim.keymap.set("n", "q", M.close, kmopts)
   vim.keymap.set("n", "<Esc>", M.close, kmopts)
 
-  -- Auto close on Leave
-  vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave" }, {
-    buffer = buf,
-    once = true,
-    callback = function()
-      M.close()
-    end,
+  -- The popup does not take focus, so forward the usual menu keys from the
+  -- source buffer to its cursor until the user chooses a row or closes it.
+  local function move_selection(delta)
+    if not M.active_win or not vim.api.nvim_win_is_valid(M.active_win) then return end
+    local row = vim.api.nvim_win_get_cursor(M.active_win)[1]
+    local count = vim.api.nvim_buf_line_count(M.active_buf)
+    row = math.max(1, math.min(count, row + delta))
+    pcall(vim.api.nvim_win_set_cursor, M.active_win, { row, 0 })
+  end
+
+  install_source_mappings(src_buf, {
+    ["<Up>"] = function() move_selection(-1) end,
+    ["k"] = function() move_selection(-1) end,
+    ["<Down>"] = function() move_selection(1) end,
+    ["j"] = function() move_selection(1) end,
+    ["<CR>"] = jump,
+    ["<Space>"] = jump,
+    ["q"] = M.close,
+    ["<Esc>"] = M.close,
+    ["<LeftMouse>"] = mouse_select,
+    ["<ScrollWheelUp>"] = function() mouse_scroll(-1, "<ScrollWheelUp>") end,
+    ["<ScrollWheelDown>"] = function() mouse_scroll(1, "<ScrollWheelDown>") end,
+  })
+
+  -- The source keeps focus, so lifecycle events must watch that source,
+  -- rather than a popup that was never entered. Remove them on every close.
+  M._autocmd_group = vim.api.nvim_create_augroup("ContextlineMenuLifetime", { clear = true })
+  vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave", "InsertEnter", "CursorMoved" }, {
+    group = M._autocmd_group,
+    buffer = src_buf,
+    callback = M.close,
+  })
+  vim.api.nvim_create_autocmd("WinClosed", {
+    group = M._autocmd_group,
+    pattern = tostring(win),
+    callback = M.close,
   })
 end
 

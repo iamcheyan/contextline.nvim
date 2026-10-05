@@ -26,7 +26,18 @@ M._active_menu_segment = nil
 M._active_menu_win = nil
 
 local function ensure_highlights()
-  pcall(vim.api.nvim_set_hl, 0, "ContextlineActiveMenu", { link = "Pmenu", default = true })
+  local set = vim.api.nvim_set_hl
+  local warning = vim.api.nvim_get_hl(0, { name = "DiagnosticWarn", link = false })
+  if not warning.fg then warning = vim.api.nvim_get_hl(0, { name = "WarningMsg", link = false }) end
+
+  -- Links follow delayed theme/UI updates even when Heirline caches the
+  -- rendered breadcrumb. Copying RGB values leaves the old palette behind.
+  pcall(set, 0, "ContextlineText", { link = "WinBar" })
+  pcall(set, 0, "ContextlineAlert", { fg = warning.fg, bold = true })
+
+  -- Keep a marker group for popup alignment, but clicking must not recolor the
+  -- breadcrumb. The actual selected item is highlighted inside the popup.
+  pcall(set, 0, "ContextlineActiveMenu", { link = "WinBar" })
 end
 
 _G.contextline_click = function(minwid, clicks, button, modifier)
@@ -265,6 +276,17 @@ function M.format(info, opts)
   local show_scope_lines = opts.show_scope_lines ~= nil and opts.show_scope_lines or M.config.show_scope_lines
   local show_buffer_flags = opts.show_buffer_flags ~= nil and opts.show_buffer_flags or M.config.show_buffer_flags
   local hl_mode = opts.hl_mode ~= nil and opts.hl_mode or M.config.hl_mode
+  local hl_map = opts.hl_map
+  local fixed_palette = opts.fixed_palette
+  local function mapped_highlight(group)
+    if fixed_palette then
+      if group == "WarningMsg" or group == "DiagnosticError" or group == "DiagnosticWarn" then
+        return "ContextlineAlert"
+      end
+      return "ContextlineText"
+    end
+    return (hl_map and hl_map[group]) or group
+  end
 
   local segments = info.all or info.segments or {}
   if #segments == 0 then
@@ -273,8 +295,8 @@ function M.format(info, opts)
 
   local bufnr = info.bufnr or (opts.bufnr ~= 0 and opts.bufnr or vim.api.nvim_get_current_buf())
 
-  ensure_highlights()
   local target_win = drawing_winid(opts)
+  ensure_highlights()
   local formatted_parts = {}
   for i, seg in ipairs(segments) do
     local piece = ""
@@ -288,18 +310,18 @@ function M.format(info, opts)
 
     if is_active and hl_mode then
       local icon_part = (show_icons and seg.icon and seg.icon ~= "") and (seg.icon .. " ") or ""
-      piece = string.format("%%#ContextlineActiveMenu# %s%s %%*", icon_part, text)
+      piece = string.format("%%#ContextlineActiveMenu#%s%s%%*", icon_part, text)
     else
       if show_icons and seg.icon and seg.icon ~= "" then
         if hl_mode and seg.icon_hl then
-          piece = string.format("%%#%s#%s%%*", seg.icon_hl, seg.icon) .. " "
+          piece = string.format("%%#%s#%s%%*", mapped_highlight(seg.icon_hl), seg.icon) .. " "
         else
           piece = seg.icon .. " "
         end
       end
 
       if hl_mode then
-        local hl = is_leaf and (seg.hl or "Bold") or (seg.hl or "Normal")
+        local hl = mapped_highlight(is_leaf and (seg.hl or "Bold") or (seg.hl or "Normal"))
         piece = piece .. string.format("%%#%s#%s%%*", hl, text)
       else
         piece = piece .. text
@@ -311,17 +333,17 @@ function M.format(info, opts)
       local is_modified = vim.bo[bufnr].modified
       local is_ro = vim.bo[bufnr].readonly or not vim.bo[bufnr].modifiable
       if is_modified then
-        piece = piece .. (hl_mode and " %#WarningMsg#[●]%*" or " [●]")
+        piece = piece .. (hl_mode and string.format(" %%#%s#[●]%%*", mapped_highlight("WarningMsg")) or " [●]")
       end
       if is_ro then
-        piece = piece .. (hl_mode and " %#Comment#[]%*" or " []")
+        piece = piece .. (hl_mode and string.format(" %%#%s#[]%%*", mapped_highlight("Comment")) or " []")
       end
     end
 
     -- Scope line count for the leaf symbol
     if show_scope_lines and is_leaf and seg.type == "symbol" and seg.lines and seg.lines > 1 then
       local scope_str = string.format("(%dL)", seg.lines)
-      piece = piece .. (hl_mode and string.format(" %%#Comment#%s%%*", scope_str) or (" " .. scope_str))
+      piece = piece .. (hl_mode and string.format(" %%#%s#%s%%*", mapped_highlight("Comment"), scope_str) or (" " .. scope_str))
     end
 
     local clickable = opts.clickable ~= nil and opts.clickable or M.config.clickable
@@ -332,7 +354,7 @@ function M.format(info, opts)
     table.insert(formatted_parts, piece)
   end
 
-  local sep_str = hl_mode and string.format("%%#Comment#%s%%*", separator) or separator
+  local sep_str = hl_mode and string.format("%%#%s#%s%%*", mapped_highlight("Comment"), separator) or separator
   local result = table.concat(formatted_parts, sep_str)
 
   -- Diagnostics badge at the end of the breadcrumb

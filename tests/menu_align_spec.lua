@@ -1,5 +1,7 @@
 local contextline = require("contextline")
 local menu = require("contextline.menu")
+vim.api.nvim_set_hl(0, "WinBar", { fg = "#000087", bg = "#5fffff" })
+vim.api.nvim_set_hl(0, "Pmenu", { fg = "#ffffff", bg = "#008787" })
 
 contextline.setup({
   redraw = false,
@@ -123,18 +125,32 @@ assert(
 -- Restore a live winbar for the remaining checks.
 vim.wo[win].winbar = " %{%v:lua.require'contextline'.get()%}"
 
--- First click vs second click: Heirline evaluates get() with no winid while
--- the dropdown float is current. The chip must still render for the source
--- window, using g:statusline_winid (the window whose winbar is being drawn).
+-- Opening the dropdown keeps the source window focused, preserving its active
+-- winbar and BufferLine selection.  Its click marker must still render on the
+-- source winbar so the popup stays aligned to the clicked segment.
+contextline._active_menu_segment = nil
+contextline._active_menu_win = nil
+local plain_line = contextline.get({ winid = win, fixed_palette = true, separator = "  " })
+local plain_render = vim.api.nvim_eval_statusline(plain_line, { winid = win, use_winbar = true }).str
 menu.open({ bufnr = 0, winid = win, segment_index = 2 })
 assert(menu.active_win and vim.api.nvim_win_is_valid(menu.active_win), "menu did not open")
-assert(vim.api.nvim_get_current_win() == menu.active_win, "expected to be inside the dropdown float")
+assert(vim.api.nvim_get_current_win() == win, "opening the dropdown must keep focus in the source window")
+local active_line = contextline.get({ winid = win, fixed_palette = true, separator = "  " })
+local active_render = vim.api.nvim_eval_statusline(active_line, { winid = win, use_winbar = true }).str
+assert(active_render == plain_render, "opening the menu must not shift or recolor the clicked winbar text")
+assert(
+  vim.deep_equal(
+    { fg = vim.api.nvim_get_hl(0, { name = "ContextlineText", link = false }).fg, bg = vim.api.nvim_get_hl(0, { name = "ContextlineText", link = false }).bg },
+    (function() local h = vim.api.nvim_get_hl(0, { name = "ContextlineActiveMenu", link = false }); return { fg = h.fg, bg = h.bg } end)()
+  ),
+  "opening the popup must not recolor the clicked winbar segment"
+)
 
 vim.g.statusline_winid = win
 local painted = contextline.get({ separator = "  " })
 assert(
   painted:find("ContextlineActiveMenu", 1, true),
-  "winbar chip vanished after the float stole focus; first click would show no selection. got: " .. painted
+  "winbar chip vanished after opening the dropdown. got: " .. painted
 )
 
 -- A different window's winbar must not inherit the chip.
