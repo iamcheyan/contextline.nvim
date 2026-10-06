@@ -440,6 +440,12 @@ function M.open(opts)
     end
   end
 
+  -- Standalone users retain their theme; the dotfiles adapter supplies Fresh.
+  for name, fallback in pairs({ FreshMenu = "Pmenu", FreshMenuSelected = "PmenuSel",
+    FreshMenuBorder = "Pmenu", FreshMenuMuted = "Comment" }) do
+    vim.api.nvim_set_hl(0, name, { default = true, link = fallback })
+  end
+
   -- Format display lines (with 1 space left padding for borderless dropdown)
   local display_lines = {}
   local highlights = {}
@@ -454,14 +460,7 @@ function M.open(opts)
       max_len = visual
     end
 
-    local icon_byte_start = 1 + #indent
-    local icon_byte_end = icon_byte_start + #(item.icon or "󰘦")
-    table.insert(highlights, {
-      hl_group = item.icon_hl or "Identifier",
-      line = i - 1,
-      col_start = icon_byte_start,
-      col_end = icon_byte_end,
-    })
+
   end
 
   -- Pad right side with line numbers
@@ -476,7 +475,7 @@ function M.open(opts)
     local lnum_start = #text + #pad
     local lnum_end = lnum_start + #lnum_str
     table.insert(highlights, {
-      hl_group = "Comment",
+      hl_group = "FreshMenuMuted",
       line = i - 1,
       col_start = lnum_start,
       col_end = lnum_end,
@@ -525,7 +524,7 @@ function M.open(opts)
     width = win_width,
     height = win_height,
     style = "minimal",
-    border = "none",
+    border = "single",
     zindex = 250,
   })
 
@@ -535,7 +534,7 @@ function M.open(opts)
   vim.wo[win].scrolloff = 0
   vim.wo[win].sidescrolloff = 0
   vim.wo[win].wrap = false
-  vim.wo[win].winhighlight = "NormalFloat:Pmenu,FloatBorder:Pmenu,CursorLine:PmenuSel"
+  vim.wo[win].winhighlight = "NormalFloat:FreshMenu,FloatBorder:FreshMenuBorder,CursorLine:FreshMenuSelected"
 
   -- Set initial cursor on current active symbol
   local buf_lines = vim.api.nvim_buf_line_count(buf)
