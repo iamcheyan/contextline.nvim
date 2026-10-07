@@ -68,16 +68,24 @@ local function buffer_maps(bufnr, lhs)
   return result
 end
 local source_j_maps = buffer_maps(source_buf, "j")
+local leader_calls = 0
+vim.keymap.set("n", "<Space>", function() leader_calls = leader_calls + 1 end, {
+  buffer = source_buf, desc = "menu_spec leader trigger",
+})
 menu.open({ bufnr = 0, winid = source_win, segment_index = 1 })
 assert(menu.active_win ~= nil and vim.api.nvim_win_is_valid(menu.active_win), "Menu float window did not open for segment 1")
 assert(vim.api.nvim_get_current_win() == source_win, "Opening the menu must keep focus in the source window")
 assert(vim.api.nvim_get_current_buf() == source_buf, "Opening the menu must keep the source buffer current")
+vim.api.nvim_feedkeys(" ", "x", false)
+assert(leader_calls == 1, "Hierarchy must preserve the single-space leader trigger")
 local initial_menu_row = vim.api.nvim_win_get_cursor(menu.active_win)[1]
 vim.api.nvim_feedkeys("j", "x", false)
 assert(vim.api.nvim_win_get_cursor(menu.active_win)[1] == initial_menu_row + 1, "j should move the popup selection without moving the source cursor")
 assert(vim.api.nvim_get_current_win() == source_win, "Menu navigation must not change the focused window")
 vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "x", false)
 assert(menu.active_win == nil, "Escape should close the popup while focus stays in the source window")
+vim.api.nvim_feedkeys(" ", "x", false)
+assert(leader_calls == 2, "Closing hierarchy must preserve the single-space leader trigger")
 local restored_j_maps = buffer_maps(source_buf, "j")
 assert(
   #restored_j_maps == #source_j_maps,

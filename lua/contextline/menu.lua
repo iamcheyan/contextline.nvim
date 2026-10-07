@@ -17,7 +17,8 @@ local function install_source_mappings(bufnr, handlers)
   for lhs, callback in pairs(handlers) do
     saved[lhs] = {}
     for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(bufnr, "n")) do
-      if mapping.lhs == lhs then
+      if vim.api.nvim_replace_termcodes(mapping.lhs, true, false, true)
+        == vim.api.nvim_replace_termcodes(lhs, true, false, true) then
         table.insert(saved[lhs], mapping)
       end
     end
@@ -581,30 +582,28 @@ function M.open(opts)
     local mouse_pos = vim.fn.getmousepos()
     local popup_pos = vim.api.nvim_win_get_position(win)
     local popup_row, popup_col = popup_pos[1], popup_pos[2]
-    local inside_popup = mouse_pos and mouse_pos.screenrow >= popup_row + 1
-      and mouse_pos.screenrow <= popup_row + win_height
-      and mouse_pos.screencol >= popup_col + 1
-      and mouse_pos.screencol <= popup_col + win_width
+    -- Prefer Neovim's window hit-test (as dropbar does) so borders and UI
+    -- coordinates cannot make a wheel event over the popup look like one
+    -- over the source window. Keep the screen rectangle fallback for versions
+    -- where getmousepos() reports the underlying window for a float.
+    local inside_popup = mouse_pos and (mouse_pos.winid == win
+      or (mouse_pos.screenrow >= popup_row + 1
+        and mouse_pos.screenrow <= popup_row + win_height
+        and mouse_pos.screencol >= popup_col + 1
+        and mouse_pos.screencol <= popup_col + win_width))
 
     if inside_popup then
-      -- A wheel event over a fully visible menu should not scroll the source
-      -- buffer behind it. Move the popup viewport only when rows overflow.
-      if #final_lines <= win_height then return end
-
+      -- Wheel navigation follows entries even when the entire list fits.
+      -- Set the selection first, then clamp the viewport to real rows so
+      -- reaching the last entry cannot expose an empty area below the list.
+      local cursor = vim.api.nvim_win_get_cursor(win)
+      local row = math.max(1, math.min(#final_lines, cursor[1] + delta))
+      vim.api.nvim_win_set_cursor(win, { row, 0 })
       local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
       local max_topline = math.max(1, #final_lines - win_height + 1)
-      local topline = math.max(1, math.min(max_topline, view.topline + delta * 3))
-      view.topline = topline
+      view.topline = math.max(1, math.min(max_topline, view.topline))
       view.topfill = 0
       vim.api.nvim_win_call(win, function() vim.fn.winrestview(view) end)
-
-      -- Keep the highlighted menu selection visible after moving its viewport.
-      local cursor = vim.api.nvim_win_get_cursor(win)
-      local last_visible = math.min(#final_lines, topline + win_height - 1)
-      local row = math.max(topline, math.min(last_visible, cursor[1]))
-      if row ~= cursor[1] then
-        pcall(vim.api.nvim_win_set_cursor, win, { row, 0 })
-      end
       return
     end
 
@@ -636,7 +635,6 @@ function M.open(opts)
     ["<Down>"] = function() move_selection(1) end,
     ["j"] = function() move_selection(1) end,
     ["<CR>"] = jump,
-    ["<Space>"] = jump,
     ["q"] = M.close,
     ["<Esc>"] = M.close,
     ["<LeftMouse>"] = mouse_select,

@@ -34,7 +34,7 @@ try:
     time.sleep(0.05)
     n.command('redraw')
     assert n.exec_lua('return require("contextline.menu").active_win ~= nil'), 'wheel over a fitting menu closed it'
-    assert n.exec_lua('return vim.api.nvim_win_get_cursor(require("contextline.menu").active_win)') == popup_cursor, 'wheel scrolled a menu whose contents all fit'
+    assert n.exec_lua('return vim.api.nvim_win_get_cursor(require("contextline.menu").active_win)') == [min(popup_cursor[0] + 1, 6), 0], 'wheel did not move selection in a fitting menu'
     assert n.exec_lua('return vim.fn.winsaveview()') == source_view, 'wheel over a fitting menu scrolled the source buffer'
     n.exec_lua('''
       local lines = {'       DATA DIVISION.', '       WORKING-STORAGE SECTION.'}
@@ -55,9 +55,9 @@ try:
     time.sleep(0.05)
     n.command('redraw')
     scrolled_view = n.exec_lua('local m=require("contextline.menu"); return vim.api.nvim_win_call(m.active_win,vim.fn.winsaveview)')
-    assert scrolled_view['topline'] > popup_view['topline'], f'wheel did not scroll overflowing menu: before={popup_view}, after={scrolled_view}'
+    assert scrolled_view['lnum'] == popup_view['lnum'] + 1, f'wheel did not move the menu selection: before={popup_view}, after={scrolled_view}'
     assert n.exec_lua('return vim.api.nvim_win_get_cursor(source_win)') == source_cursor, 'scrolling menu moved the source cursor'
-    assert n.exec_lua('local m=require("contextline.menu"); return vim.wo[m.active_win].winhighlight') == 'NormalFloat:Pmenu,FloatBorder:Pmenu,CursorLine:PmenuSel', 'scrolling changed menu colors'
+    assert n.exec_lua('local m=require("contextline.menu"); return vim.wo[m.active_win].winhighlight') == 'NormalFloat:FreshMenu,FloatBorder:FreshMenuBorder,CursorLine:FreshMenuSelected', 'scrolling changed menu colors'
     n.exec_lua('''
       require('contextline.menu').close()
       vim.api.nvim_buf_set_lines(0, 0, -1, false, {
