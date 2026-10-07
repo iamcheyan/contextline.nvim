@@ -316,6 +316,14 @@ function M.close()
     M._autocmd_group = nil
   end
   restore_source_mappings()
+  if M._saved_mousemove ~= nil then
+    vim.o.mousemoveevent = M._saved_mousemove
+    M._saved_mousemove = nil
+  end
+  if M._saved_guicursor then
+    vim.o.guicursor = M._saved_guicursor
+    M._saved_guicursor = nil
+  end
   local cl_ok, cl = pcall(require, "contextline")
   if cl_ok then
     cl._active_menu_segment = nil
@@ -545,6 +553,18 @@ function M.open(opts)
   M.active_win = win
   M.active_buf = buf
 
+  -- Focus stays in the editor. Its hardware cursor can otherwise show through
+  -- this popup during wheel redraws, appearing as a stray blinking green block.
+  local surface = vim.api.nvim_get_hl(0, { name = "FreshMenu", link = false })
+  local background = surface.bg or vim.api.nvim_get_hl(0, { name = "NormalFloat", link = false }).bg
+  vim.api.nvim_set_hl(0, "ContextlineHiddenCursor", {
+    fg = background, bg = background, blend = 100,
+  })
+  M._saved_mousemove = vim.o.mousemoveevent
+  vim.o.mousemoveevent = true
+  M._saved_guicursor = vim.o.guicursor
+  vim.o.guicursor = "a:ContextlineHiddenCursor-blinkon0"
+
   -- Keymaps for selection and exit
   local function jump()
     local ok, cur = pcall(vim.api.nvim_win_get_cursor, win)
@@ -563,6 +583,13 @@ function M.open(opts)
   local kmopts = { buffer = buf, nowait = true, silent = true }
   vim.keymap.set("n", "<CR>", jump, kmopts)
   vim.keymap.set("n", "<Space>", jump, kmopts)
+  local function mouse_hover()
+    local mp = vim.fn.getmousepos()
+    if mp and mp.winid == win and mp.line >= 1 and mp.line <= #final_lines then
+      vim.api.nvim_win_set_cursor(win, { mp.line, 0 })
+    end
+  end
+
   local function mouse_select()
     local mouse_pos = vim.fn.getmousepos()
     if mouse_pos and mouse_pos.winid == win then
@@ -613,6 +640,7 @@ function M.open(opts)
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "m", false)
   end
 
+  vim.keymap.set("n", "<MouseMove>", mouse_hover, kmopts)
   vim.keymap.set("n", "<LeftMouse>", mouse_select, kmopts)
   vim.keymap.set("n", "<ScrollWheelUp>", function() mouse_scroll(-1, "<ScrollWheelUp>") end, kmopts)
   vim.keymap.set("n", "<ScrollWheelDown>", function() mouse_scroll(1, "<ScrollWheelDown>") end, kmopts)
@@ -637,6 +665,7 @@ function M.open(opts)
     ["<CR>"] = jump,
     ["q"] = M.close,
     ["<Esc>"] = M.close,
+    ["<MouseMove>"] = mouse_hover,
     ["<LeftMouse>"] = mouse_select,
     ["<ScrollWheelUp>"] = function() mouse_scroll(-1, "<ScrollWheelUp>") end,
     ["<ScrollWheelDown>"] = function() mouse_scroll(1, "<ScrollWheelDown>") end,
