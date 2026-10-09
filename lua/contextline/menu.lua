@@ -454,6 +454,7 @@ function M.open(opts)
     FreshMenuBorder = "Pmenu", FreshMenuMuted = "Comment" }) do
     vim.api.nvim_set_hl(0, name, { default = true, link = fallback })
   end
+  vim.api.nvim_set_hl(0, "ContextlineMenuLineNr", { default = true, fg = "#ffffff" })
 
   -- Format display lines (with 1 space left padding for borderless dropdown)
   local display_lines = {}
@@ -480,11 +481,11 @@ function M.open(opts)
     local full_line = text .. pad .. lnum_str .. " "
     table.insert(final_lines, full_line)
 
-    -- Highlight line number with Comment
+    -- Keep line numbers readable without overriding the selected row background.
     local lnum_start = #text + #pad
     local lnum_end = lnum_start + #lnum_str
     table.insert(highlights, {
-      hl_group = "FreshMenuMuted",
+      hl_group = "ContextlineMenuLineNr",
       line = i - 1,
       col_start = lnum_start,
       col_end = lnum_end,
